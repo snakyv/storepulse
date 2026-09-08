@@ -106,7 +106,7 @@ jobs:
               stores = json.load(file)
           assert len(stores) == 5, f"expected 5 stores, got {len(stores)}"
           PY
-      - name: Smoke-test idempotent SALE ingestion
+      - name: Smoke-test idempotent SALE and safe REFUND ingestion
         run: |
           python - <<'PY'
           import datetime
@@ -116,18 +116,6 @@ jobs:
           import uuid
 
           endpoint = "http://localhost:8000/api/v1/events"
-          event_id = str(uuid.uuid4())
-          payload = {
-              "event_id": event_id,
-              "store_code": "MAD-MADRID",
-              "product_sku": "COFFEE-001",
-              "event_type": "SALE",
-              "quantity": 1,
-              "amount_cents": 799,
-              "occurred_at": datetime.datetime.now(datetime.UTC).isoformat(),
-              "source_instance": "ci:docker-smoke",
-              "metadata": {"origin": "github-actions"},
-          }
 
           def post(body):
               request = urllib.request.Request(
@@ -142,11 +130,24 @@ jobs:
               except urllib.error.HTTPError as exc:
                   return exc.code, json.load(exc)
 
-          accepted_status, accepted = post(payload)
-          duplicate_status, duplicate = post(payload)
-          conflict_payload = dict(payload)
-          conflict_payload["amount_cents"] = 899
-          conflict_status, conflict = post(conflict_payload)
+          sale_id = str(uuid.uuid4())
+          sale = {
+              "event_id": sale_id,
+              "store_code": "MAD-MADRID",
+              "product_sku": "COFFEE-001",
+              "event_type": "SALE",
+              "quantity": 2,
+              "amount_cents": 1000,
+              "occurred_at": datetime.datetime.now(datetime.UTC).isoformat(),
+              "source_instance": "ci:docker-smoke:sale",
+              "metadata": {"origin": "github-actions"},
+          }
+
+          accepted_status, accepted = post(sale)
+          duplicate_status, duplicate = post(sale)
+          conflict_sale = dict(sale)
+          conflict_sale["amount_cents"] = 1100
+          conflict_status, conflict = post(conflict_sale)
 
           assert accepted_status == 201, (accepted_status, accepted)
           assert accepted["status"] == "accepted", accepted
@@ -154,6 +155,32 @@ jobs:
           assert duplicate["status"] == "duplicate", duplicate
           assert conflict_status == 409, (conflict_status, conflict)
           assert conflict["detail"] == "event_id already exists with different payload", conflict
+
+          refund = {
+              "event_id": str(uuid.uuid4()),
+              "store_code": "MAD-MADRID",
+              "product_sku": "COFFEE-001",
+              "event_type": "REFUND",
+              "quantity": 1,
+              "amount_cents": 700,
+              "occurred_at": datetime.datetime.now(datetime.UTC).isoformat(),
+              "original_event_id": sale_id,
+              "source_instance": "ci:docker-smoke:refund",
+              "metadata": {"reason": "ci-return"},
+          }
+
+          refund_status, refund_body = post(refund)
+          refund_duplicate_status, refund_duplicate = post(refund)
+          over_refund = dict(refund)
+          over_refund["event_id"] = str(uuid.uuid4())
+          over_refund_status, over_refund_body = post(over_refund)
+
+          assert refund_status == 201, (refund_status, refund_body)
+          assert refund_body["status"] == "accepted", refund_body
+          assert refund_duplicate_status == 200, (refund_duplicate_status, refund_duplicate)
+          assert refund_duplicate["status"] == "duplicate", refund_duplicate
+          assert over_refund_status == 409, (over_refund_status, over_refund_body)
+          assert over_refund_body["detail"] == "refund exceeds remaining sale amount", over_refund_body
           PY
       - name: Show service state
         if: always()

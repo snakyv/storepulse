@@ -2,22 +2,27 @@
 
 StorePulse is the incremental engineering implementation for the Mad Devs Junior Agentic Developer take-home, Case 5: **Store Ranking**.
 
-The repository contains a **verified foundation baseline** plus the Stage 03 idempotent SALE-ingestion implementation. It is intentionally not presented as the finished assignment. Stage 03 has passed the full developer-machine verification gate and is ready for its feature commit; the corresponding GitHub Actions run remains the publication gate after push.
+The repository contains a verified infrastructure baseline, verified Stage 03 idempotent SALE ingestion, and a locally verified Stage 04 safe-refund implementation. It is intentionally not presented as the finished assignment. Stage 04 has passed the complete developer-machine verification gate and is ready for its isolated feature commit; GitHub Actions for that commit are not claimed until the commit is pushed and the workflow completes.
 
-**Verified baseline (2026-09-08, checkpoint 00e):** the complete local verification pipeline passed on Windows + Docker Desktop, including Docker image builds, PostgreSQL readiness, Alembic migrations, deterministic seed, Ruff, mypy, `10/10` backend tests, simulator compilation, pinned frontend dependency checks, Vue typecheck, `2/2` Vitest tests, production build and a five-store API smoke test. The developer also verified five simultaneous heartbeat simulator containers, automatic updates in two browser tabs, backend-restart persistence, and a clean bootstrap after deleting the project PostgreSQL volume. The same baseline was committed as `a2bf2b7 chore: establish verified StorePulse foundation`, pushed to `origin/main`, and the corresponding GitHub Actions run was confirmed green by the developer.
+**Verified baseline (2026-09-08, checkpoint 00e):** the local Windows + Docker Desktop verification pipeline passed, including Docker builds, PostgreSQL readiness, Alembic migrations, deterministic seed, Ruff, mypy, backend tests, simulator compilation, pinned frontend dependency checks, Vue typecheck, Vitest, production build and API smoke. Five simultaneous heartbeat simulator containers, two-tab automatic connectivity refresh, backend-restart persistence and clean-volume bootstrap were also verified. The foundation commit was published as `a2bf2b7 chore: establish verified StorePulse foundation`, and its GitHub Actions run was confirmed green by the developer.
 
-## Implemented in the verified foundation
+## Implemented through locally verified Stage 04
 
-- FastAPI backend with liveness and PostgreSQL readiness endpoints.
-- PostgreSQL persistence and Alembic initial migration.
+- FastAPI backend with liveness/readiness endpoints.
+- PostgreSQL persistence and Alembic migrations.
 - Relational schema for stores, products and POS events.
-- `POST /api/v1/events` SALE ingestion with PostgreSQL-authoritative `event_id` idempotency.
-- Exact duplicate retries return `200 duplicate`; conflicting reuse of an `event_id` returns `409`.
-- Timezone-aware `occurred_at` is preserved independently from database-assigned `received_at`.
-- Idempotent deterministic seed with five demo stores and ten products.
-- Store list endpoint and heartbeat endpoint.
-- WebSocket invalidation channel; heartbeat changes refresh multiple open clients without manual reload.
-- Vue 3 + TypeScript dashboard shell showing store connectivity.
+- Deterministic seed with five stores and ten products.
+- `POST /api/v1/events` with discriminated SALE/REFUND request bodies.
+- PostgreSQL-authoritative `event_id` idempotency.
+- Exact duplicate retries return `200 duplicate`; conflicting `event_id` reuse returns `409`.
+- Timezone-aware producer `occurred_at` is preserved independently from database `received_at`.
+- Safe REFUND candidate with required `original_event_id`.
+- Original refund target must exist and be a SALE from the same store/product.
+- Cumulative refund quantity and amount are bounded by the original sale.
+- `SELECT ... FOR UPDATE` serializes refund-limit decisions per original sale.
+- Post-lock event-ID recheck preserves exact-duplicate semantics under concurrent refund retries.
+- Database check constraints enforce SALE/REFUND original-reference shape and prevent self-reference.
+- WebSocket invalidation channel with REST refetch on the Vue client.
 - Five Docker Compose simulator services that currently send heartbeats only.
 - Local PowerShell workflow and GitHub Actions quality checks.
 - Pinned frontend dependency graph through `package-lock.json` and `npm ci`.
@@ -26,7 +31,7 @@ The repository contains a **verified foundation baseline** plus the Stage 03 ide
 
 ## Explicitly not implemented yet
 
-Refund validation, ranking analytics, late-event ranking correction, offline incidents, notification outbox, midday plan alerts, store detail analytics, persisted settings UI and the final concurrency/E2E/restart proof for ranking behavior.
+Configurable POS sale/refund generation, ranking analytics, refund subtraction from ranking metrics, late-event ranking correction, offline incidents, notification outbox, midday plan alerts, store detail analytics, persisted settings UI and the final concurrency/E2E/restart proof for ranking behavior.
 
 See `docs/PROJECT_STATE.md`, `docs/REQUIREMENTS_TRACEABILITY.md` and `docs/NEXT_STEPS.md`.
 
@@ -39,17 +44,17 @@ Verified target environment:
 - Node.js 22 / npm 10 for optional host frontend work
 - Docker Desktop with Docker Compose
 
-Pinned container/CI runtimes for this baseline:
+Pinned container/CI runtimes:
 
 - Python `3.12.14`
 - Node `22.23.2`
 - PostgreSQL `17.11-alpine`
 
-Ports expected by the project:
+Ports:
 
 - Frontend: `5173`
 - Backend: `8000`
-- PostgreSQL host mapping: `55432` (container port `5432`)
+- PostgreSQL host mapping: `55432` (container `5432`)
 
 The existing host port `5432` is deliberately not used.
 
@@ -74,40 +79,81 @@ Start the five heartbeat simulators:
 .\scripts\demo.ps1
 ```
 
-Within roughly one heartbeat interval, the five store cards should show `ONLINE`. Open the dashboard in two tabs: heartbeat-triggered WebSocket invalidations and the fallback refresh keep both tabs synchronized.
-
 ## Local verification
 
 ```powershell
 .\scripts\verify.ps1
 ```
 
-The verification script:
-
-1. validates Docker Compose configuration;
-2. rebuilds the exact current source images;
-3. starts PostgreSQL and waits for `pg_isready`;
-4. applies migrations and deterministic seed;
-5. runs Ruff, mypy and pytest;
-6. compiles the simulator;
-7. verifies the pinned frontend dependency tree and tool versions;
-8. runs Vue typecheck, Vitest and the production build;
-9. starts the backend and smoke-tests readiness plus the five-store API result.
+The verification script rebuilds the exact source images, waits for PostgreSQL, applies all migrations, seeds deterministic data, runs Ruff/mypy/pytest, checks the simulator, validates pinned frontend dependencies, runs Vue typecheck/Vitest/build, then starts the backend and smoke-tests readiness plus the seeded store API.
 
 The script uses Docker, so local PostgreSQL, `psql`, Poetry, pnpm, Redis, Kafka and Make are not required.
 
-## Verified runtime scenarios
+## Event API
 
-The foundation baseline has also been exercised outside the automated quality gate:
+SALE example:
 
-- five heartbeat simulator containers running concurrently;
-- all five simulators receiving `200 OK` from the heartbeat endpoint;
-- two browser tabs updating automatically when store connectivity changes;
-- five seeded stores still present after a backend restart;
-- clean bootstrap after `docker compose --profile demo down -v`;
-- complete `scripts/verify.ps1` pass again after the clean bootstrap.
+```json
+{
+  "event_id": "2bc00f92-ec88-4c3c-9302-7d8754540706",
+  "store_code": "MAD-MADRID",
+  "product_sku": "COFFEE-001",
+  "event_type": "SALE",
+  "quantity": 2,
+  "amount_cents": 1598,
+  "occurred_at": "2026-09-08T18:20:00Z",
+  "source_instance": "simulator-madrid-1"
+}
+```
 
-These proofs cover the current connectivity/persistence foundation only. They do **not** claim that sales ranking, refund behavior or ranking restart persistence are complete before those features exist.
+REFUND example:
+
+```json
+{
+  "event_id": "72e1828d-804f-4edf-8c2a-d52268514e9d",
+  "store_code": "MAD-MADRID",
+  "product_sku": "COFFEE-001",
+  "event_type": "REFUND",
+  "quantity": 1,
+  "amount_cents": 799,
+  "occurred_at": "2026-09-08T19:20:00Z",
+  "original_event_id": "2bc00f92-ec88-4c3c-9302-7d8754540706",
+  "source_instance": "simulator-madrid-1"
+}
+```
+
+See `docs/EVENT_INGESTION.md` and `docs/REFUNDS.md` for exact semantics.
+
+## Architecture
+
+```text
+heartbeat simulators --HTTP--> FastAPI <--SALE/REFUND events-- POS clients/tests
+                                 |
+                                 +--transactions/row locks--> PostgreSQL
+                                 |
+                                 +--WebSocket invalidation--> Vue clients
+```
+
+PostgreSQL is authoritative; WebSocket messages only tell clients to refetch current state. Refund-limit concurrency is serialized by locking the original SALE row, not by process-local locks.
+
+More detail: `docs/ARCHITECTURE.md`.
+
+## Git history discipline
+
+The real public history starts from verified work rather than fabricated chronology.
+
+```text
+a2bf2b7 chore: establish verified StorePulse foundation
+docs: record verified baseline and delivery roadmap
+feat(events): add idempotent POS sale ingestion
+feat(refunds): enforce safe refund processing     # locally verified; pending publication
+```
+
+Exact SHAs for later commits are not invented before Git creates them. Each feature is committed only after the local verification gate passes, then independently validated in GitHub Actions.
+
+## Dependency reproducibility
+
+Python direct dependencies are pinned. The frontend dependency graph is committed in `frontend/package-lock.json`, Docker and CI use `npm ci`, TypeScript is pinned to `6.0.2`, and the frontend runtime is pinned to Node `22.23.2`.
 
 ## Stop
 
@@ -115,40 +161,4 @@ These proofs cover the current connectivity/persistence foundation only. They do
 .\scripts\stop.ps1
 ```
 
-Database data is preserved. To intentionally delete project data, use `docker compose down -v` only after understanding that it removes the StorePulse PostgreSQL volume.
-
-## Architecture
-
-```text
-heartbeat simulators --HTTP--> FastAPI <--SALE events-- POS clients/tests
-                                 |
-                                 +--transaction--> PostgreSQL
-                                 |
-                                 +--WebSocket invalidation--> Vue clients
-```
-
-PostgreSQL is authoritative; WebSocket messages only tell clients to refetch current state. The backend owns one lazily created async SQLAlchemy engine per process and disposes it on application shutdown.
-
-More detail: `docs/ARCHITECTURE.md` and `docs/EVENT_INGESTION.md`.
-
-## Git history
-
-The real public history starts from the verified baseline rather than from generated fake chronology.
-
-Current foundation commit:
-
-```text
-a2bf2b7 chore: establish verified StorePulse foundation
-```
-
-The verified-baseline documentation commit is followed by the Stage 03 feature commit:
-
-```text
-feat(events): add idempotent POS sale ingestion
-```
-
-The Stage 03 implementation passed the full local verification gate before commit. GitHub Actions validates the published commit independently. See `docs/NEXT_STEPS.md`.
-
-## Dependency reproducibility
-
-Python direct dependencies are pinned. The frontend dependency graph is committed in `frontend/package-lock.json`, Docker and CI use `npm ci`, TypeScript is pinned to `6.0.2`, and the frontend runtime is pinned to Node `22.23.2`.
+Database data is preserved. Use `docker compose down -v` only when intentionally deleting the StorePulse PostgreSQL volume.

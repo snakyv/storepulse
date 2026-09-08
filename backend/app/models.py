@@ -87,4 +87,13 @@ class PosEvent(Base):
         CheckConstraint("event_type IN ('SALE', 'REFUND')", name="ck_pos_events_type"),
         CheckConstraint("quantity > 0", name="ck_pos_events_quantity_positive"),
         CheckConstraint("amount_cents > 0", name="ck_pos_events_amount_positive"),
+        CheckConstraint(
+            "(event_type = 'SALE' AND original_event_id IS NULL) "
+            "OR (event_type = 'REFUND' AND original_event_id IS NOT NULL)",
+            name="ck_pos_events_original_reference",
+        ),
+        CheckConstraint(
+            "original_event_id IS NULL OR original_event_id <> event_id",
+            name="ck_pos_events_not_self_reference",
+        ),
     )

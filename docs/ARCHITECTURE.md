@@ -27,22 +27,24 @@ The assignment requires separate backend/frontend, relational persistence, multi
 
 - `stores` — identity, timezone, daily target, responsible person, heartbeat timestamp.
 - `products` — stable product catalogue.
-- `pos_events` — append-only SALE/REFUND-shaped event table. Stage 03 exposes validated SALE ingestion; refund validation is intentionally deferred to Stage 04.
+- `pos_events` — append-only SALE/REFUND events with producer event time and server reception time.
 
 Money is represented in integer minor units (`*_cents`). Persisted event timestamps use timezone-aware PostgreSQL timestamps.
 
-## SALE ingestion and idempotency
+Migration `20260908_0002_refund_invariants.py` adds database checks requiring SALE rows to have no original reference, REFUND rows to have one, and prohibiting self-reference.
 
-`event_id` is the event identity and the PostgreSQL primary key. The API uses PostgreSQL-specific `INSERT ... ON CONFLICT DO NOTHING` as the concurrency authority.
+## Event identity and idempotency
+
+`event_id` is the event identity and PostgreSQL primary key. Both SALE and REFUND ingestion use PostgreSQL-specific `INSERT ... ON CONFLICT DO NOTHING` as the final concurrency authority.
 
 ```text
 validate request
     |
-    +-- existing event_id? -- yes --> compare immutable payload
+    +-- existing event_id? -- yes --> compare immutable logical payload
     |                                  | same      -> 200 duplicate
     |                                  + different -> 409 conflict
     |
-    +-- no --> resolve store + product
+    +-- no --> event-specific validation
                |
                +-- INSERT ... ON CONFLICT DO NOTHING RETURNING received_at
                       | inserted -> update store.last_seen_at -> COMMIT -> 201
@@ -50,11 +52,41 @@ validate request
                       + conflict -> re-read winner -> duplicate / 409
 ```
 
-This avoids the unsafe `SELECT-if-absent` followed by unconditional `INSERT` pattern. Concurrent identical requests can create only one primary-key row; concurrent conflicting requests resolve to one accepted row and one conflict.
+This avoids treating an application `SELECT-if-absent` check as authoritative. Concurrent identical requests can create only one primary-key row.
 
-The producer's timezone-aware `occurred_at` is stored independently from PostgreSQL-assigned `received_at`. Analytics will use `occurred_at`, so late delivery does not silently move a sale into the reception-time window.
+## Refund concurrency model
 
-Full request/response semantics are documented in `docs/EVENT_INGESTION.md`.
+Refunds add a second concurrency invariant: cumulative refund quantity and amount must never exceed the original sale.
+
+The service locks the referenced SALE row with `SELECT ... FOR UPDATE` before reading cumulative refunds. Requests refunding the same sale therefore serialize their limit decisions, while refunds for unrelated sales remain independent.
+
+```text
+resolve store/product
+      |
+lock original SALE row FOR UPDATE
+      |
+re-check refund event_id after any lock wait
+      |
+validate original type + same store/product
+      |
+sum committed refunds for original SALE
+      |
+check remaining quantity and amount independently
+      |
+insert REFUND with event_id ON CONFLICT protection
+      |
+commit
+```
+
+The post-lock event-ID re-check is essential: an identical retry may have been waiting while the first refund committed. Re-checking turns it into `200 duplicate` before cumulative limits are applied a second time.
+
+Cross-row rules such as original-event type, same store/product and cumulative limits remain transactional service invariants because row CHECK constraints cannot safely express them.
+
+See `docs/REFUNDS.md` for the full contract.
+
+## Event time
+
+The producer's timezone-aware `occurred_at` is stored independently from PostgreSQL-assigned `received_at` for both sales and refunds. Future analytics will filter/aggregate on `occurred_at`, allowing late delivery without moving the event into the reception-time window.
 
 ## Startup order
 
@@ -70,10 +102,22 @@ postgres healthy
 
 A heartbeat commits `last_seen_at` and then broadcasts `stores.changed`.
 
-A newly accepted sale commits the event plus the updated store `last_seen_at` and then broadcasts `events.changed`. The current Vue foundation treats either invalidation as a reason to refetch store state. Later ranking views will use the same REST-as-authority pattern.
+A newly accepted SALE or REFUND commits the event plus updated store connectivity and then broadcasts `events.changed`. Exact duplicates and rejected requests do not broadcast a business-state change.
 
-Duplicate retries and rejected conflicts do not emit a business-state invalidation because they do not change the event table.
+The Vue client treats these as invalidations and refetches REST state. This keeps PostgreSQL/REST authoritative and avoids maintaining a second ranking state inside WebSocket messages.
 
-## Async database lifecycle
+## Async engine lifecycle
 
-The backend lazily creates one pooled SQLAlchemy `AsyncEngine` per application process. Uvicorn serves the application on one asyncio event loop, and FastAPI lifespan shutdown explicitly disposes the engine pool. The pytest suite mirrors that process model with a session-scoped asyncio loop and disposes the pool before pytest closes the loop. This avoids sharing pooled asyncpg connections across unrelated event loops while preserving normal pooling in the application.
+The backend owns one lazily created pooled SQLAlchemy `AsyncEngine` per process. FastAPI lifespan shutdown disposes it explicitly. The pytest suite mirrors that model with a session-scoped asyncio loop and explicit engine disposal before the loop closes.
+
+## Deliberately deferred
+
+The current architecture does not yet include:
+
+- POS sale/refund generation from simulators;
+- ranking queries and materialized aggregates;
+- persisted dashboard settings;
+- offline incident/outbox worker;
+- local-noon alert evaluation.
+
+Those are added only when their feature stages require them.

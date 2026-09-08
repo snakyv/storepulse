@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import (
+    Body,
     Depends,
     FastAPI,
     HTTPException,
@@ -20,23 +21,30 @@ from app.config import get_settings
 from app.db import dispose_engine, get_session
 from app.event_ingestion import (
     EventConflictError,
+    InvalidOriginalSaleError,
+    OriginalSaleNotFoundError,
+    RefundLimitExceededError,
+    RefundReferenceMismatchError,
     UnknownProductError,
     UnknownStoreError,
+    ingest_refund_event,
     ingest_sale_event,
 )
 from app.models import Store
 from app.realtime import manager
 from app.schemas import (
+    EventCreate,
     EventIngestResponse,
     HealthResponse,
     HeartbeatResponse,
-    SaleEventCreate,
+    RefundEventCreate,
     StoreResponse,
 )
 from app.services import is_store_online
 
 settings = get_settings()
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+EventBody = Annotated[EventCreate, Body(discriminator="event_type")]
 
 
 @asynccontextmanager
@@ -47,7 +55,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await dispose_engine()
 
 
-app = FastAPI(title=settings.project_name, version="0.2.0", lifespan=lifespan)
+app = FastAPI(title=settings.project_name, version="0.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
@@ -124,18 +132,27 @@ async def heartbeat(store_code: str, session: SessionDep) -> HeartbeatResponse:
             "model": EventIngestResponse,
             "description": "Exact duplicate; no second event was created",
         },
-        status.HTTP_404_NOT_FOUND: {"description": "Unknown store or product"},
-        status.HTTP_409_CONFLICT: {"description": "event_id reused with different payload"},
-        status.HTTP_422_UNPROCESSABLE_CONTENT: {"description": "Invalid SALE payload"},
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Unknown store, product or original sale",
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "event_id conflict or refund exceeds remaining sale",
+        },
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "description": "Invalid event payload or refund reference",
+        },
     },
 )
 async def create_event(
-    payload: SaleEventCreate,
+    payload: EventBody,
     response: Response,
     session: SessionDep,
 ) -> EventIngestResponse:
     try:
-        result = await ingest_sale_event(session, payload)
+        if isinstance(payload, RefundEventCreate):
+            result = await ingest_refund_event(session, payload)
+        else:
+            result = await ingest_sale_event(session, payload)
     except UnknownStoreError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -145,6 +162,26 @@ async def create_event(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="unknown product",
+        ) from exc
+    except OriginalSaleNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="original sale not found",
+        ) from exc
+    except InvalidOriginalSaleError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="original_event_id must reference a SALE",
+        ) from exc
+    except RefundReferenceMismatchError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    except RefundLimitExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
         ) from exc
     except EventConflictError as exc:
         raise HTTPException(

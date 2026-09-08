@@ -208,7 +208,7 @@ async def test_naive_occurred_at_is_rejected() -> None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_refund_payload_is_not_silently_accepted_in_sale_stage() -> None:
+async def test_refund_without_original_event_id_is_rejected() -> None:
     payload = _sale_payload()
     payload["event_type"] = "REFUND"
 

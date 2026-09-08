@@ -131,3 +131,41 @@ Relevant commit:
 **Result:** PASS for the local Stage 03 gate — ready to commit as the isolated SALE-ingestion feature.
 
 **Relevant commit:** planned `feat(events): add idempotent POS sale ingestion`; exact commit SHA is intentionally not invented before commit creation.
+
+---
+
+## 2026-09-08 — Stage 04 safe refund processing candidate prepared
+
+**Goal:** add refund behavior as an isolated feature stage without weakening the Stage 03 event-idempotency contract.
+
+**Work completed in the candidate:** introduced a discriminated SALE/REFUND request contract; required `original_event_id` for REFUND; added original-sale existence/type validation; same-store and same-product checks; independent cumulative quantity/amount limits; per-original `SELECT ... FOR UPDATE` serialization; a post-lock event-ID recheck for concurrent exact retries; PostgreSQL check constraints for original-reference shape/self-reference; refund schema, integration, database-constraint and concurrency tests; refund contract documentation; and an expanded GitHub Docker smoke scenario for accepted/duplicate/over-limit refunds.
+
+**Concurrency decision:** cumulative refund limits are protected by the database row lock on the referenced SALE, not by an in-process mutex. This keeps the invariant correct across concurrent requests and future multi-process deployment. The event-ID primary key remains the separate authority for idempotency.
+
+**Migration decision:** the published initial migration is not rewritten. Stage 04 adds `20260908_0002_refund_invariants.py`, preserving real migration history.
+
+**Verification executed in the artifact-generation environment:** Python compile: PASS; database-independent pytest: PASS (`16 passed`, integration tests deselected); FastAPI OpenAPI generation: PASS; SALE/REFUND discriminator visible: PASS. Full pinned Docker Ruff/mypy/PostgreSQL integration/frontend verification is intentionally **NOT TESTED** here and remains the developer-machine gate before commit.
+
+**Result:** candidate prepared; do not mark Stage 04 complete or commit until `scripts/verify.ps1` passes on the developer machine.
+
+**Relevant commit:** planned `feat(refunds): enforce safe refund processing`; exact SHA does not exist yet.
+
+---
+
+## 2026-09-09 — Stage 04 safe refund processing locally verified
+
+**Goal:** prove the refund transaction model and cumulative-limit concurrency safeguards in the real pinned Docker/PostgreSQL environment before creating the isolated feature commit.
+
+**Work completed:** applied the Stage 04 candidate, upgraded the existing database from migration `20260908_0001` to `20260908_0002`, and ran the complete repository verification pipeline. The verified feature includes discriminated REFUND ingestion, original-SALE validation, same-store/product enforcement, independent cumulative quantity/amount limits, per-original `SELECT ... FOR UPDATE` serialization, post-lock idempotency re-checking, database reference-shape constraints and refund concurrency tests.
+
+**AI contribution:** designed and prepared the Stage 04 implementation/tests/documentation and reviewed the developer-supplied verification output.
+
+**Developer decisions:** preserve the published initial migration and add a new migration; use PostgreSQL row locking rather than process-local mutexes; keep ranking effects out of this commit; do not claim GitHub Actions before the feature is actually pushed.
+
+**Verification actually executed on the developer machine:** Stage 04 synchronization: PASS; `git diff --check`: PASS; Docker image build: PASS; PostgreSQL readiness: PASS; Alembic upgrade `20260908_0001 -> 20260908_0002`: PASS; deterministic seed: PASS; Ruff: PASS; mypy: PASS (`10 source files`); backend pytest: PASS (`47 passed`); simulator compile: PASS; frontend dependency/version checks: PASS; frontend typecheck: PASS; frontend Vitest: PASS (`2 passed`); frontend production build: PASS; backend readiness: PASS; seeded-store API smoke: PASS (exactly five stores); complete `scripts/verify.ps1`: PASS.
+
+**Publication status:** local Stage 04 gate PASS. GitHub Actions for the Stage 04 feature commit remain NOT TESTED until the commit is pushed.
+
+**Result:** PASS for the local Stage 04 gate — ready to commit as `feat(refunds): enforce safe refund processing`.
+
+**Relevant commit:** planned `feat(refunds): enforce safe refund processing`; exact SHA is intentionally not invented before Git creates it.

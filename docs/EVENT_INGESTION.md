@@ -1,10 +1,13 @@
-# POS event ingestion contract — Stage 03
+# POS event ingestion contract — Stages 03–04
 
-Stage 03 introduces the first business write path: idempotent `SALE` ingestion through `POST /api/v1/events`.
+`POST /api/v1/events` accepts a discriminated event body selected by `event_type`:
 
-Refund processing is intentionally deferred to the next feature stage. A request with `event_type: "REFUND"` is rejected by the Stage 03 request schema rather than being silently stored without refund validation.
+- `SALE` — introduced in Stage 03;
+- `REFUND` — introduced in Stage 04 with original-sale and cumulative-limit validation.
 
-## Request contract
+Both event types share the same database-authoritative `event_id` idempotency contract. Refund-specific rules are documented in `docs/REFUNDS.md`.
+
+## SALE request
 
 ```json
 {
@@ -23,23 +26,22 @@ Refund processing is intentionally deferred to the next feature stage. A request
 }
 ```
 
-Validation rules in this stage:
+A refund has the same common fields plus `event_type: "REFUND"` and a required `original_event_id`.
 
-- `event_id` is a UUID supplied by the producer and is the idempotency identity.
-- `event_type` must be `SALE`.
+## Common validation
+
+- `event_id` is a producer-supplied UUID and the idempotency identity.
 - `quantity` and `amount_cents` are strict positive integers.
 - `occurred_at` must include timezone information.
 - `store_code`, `product_sku` and `source_instance` must be non-empty and fit persisted field limits.
-- unknown stores/products return `404` for a new event ID.
-- additional request fields are rejected instead of being ignored.
-
-Money remains integer minor units; floating-point currency values are not accepted.
+- additional request fields are rejected instead of ignored.
+- money remains integer minor units; floating-point currency values are not accepted.
 
 ## Idempotency semantics
 
-The PostgreSQL primary key on `pos_events.event_id` is authoritative. The ingestion path uses PostgreSQL `INSERT ... ON CONFLICT DO NOTHING`, not a check-then-insert race as its final authority.
+The PostgreSQL primary key on `pos_events.event_id` is authoritative. Ingestion uses PostgreSQL `INSERT ... ON CONFLICT DO NOTHING`, not an application-only check-then-insert race.
 
-For a previously unseen `event_id`:
+For a previously unseen ID:
 
 ```text
 POST /api/v1/events
@@ -48,7 +50,7 @@ POST /api/v1/events
 → 201 accepted
 ```
 
-For the same `event_id` with the same immutable logical payload:
+For an exact replay:
 
 ```text
 first request  → 201 accepted
@@ -57,20 +59,18 @@ row count      → still 1
 received_at    → original value is returned
 ```
 
-For the same `event_id` with any different logical payload field:
+For the same ID with any different logical payload field:
 
 ```text
 → 409 Conflict
 → original row remains unchanged
 ```
 
-The duplicate comparison includes store, product, event type, quantity, amount, `occurred_at`, source instance, metadata and note. `received_at` is not part of the producer payload and therefore is not part of duplicate equivalence.
-
-When two requests race for a new `event_id`, PostgreSQL decides which insert wins. A losing request re-reads the committed row and classifies itself as an exact duplicate or a conflicting reuse of the ID. Integration tests cover both concurrent-identical and concurrent-conflicting requests.
+Duplicate comparison includes store, product, event type, quantity, amount, `occurred_at`, original-event reference where applicable, source instance, metadata and note. `received_at` is server-assigned and is not part of producer equivalence.
 
 ## Event time
 
-`occurred_at` is stored exactly as the timezone-aware business event instant supplied by the producer. `received_at` is assigned by PostgreSQL when the event is inserted.
+`occurred_at` is stored as the timezone-aware business-event instant supplied by the producer. `received_at` is assigned independently by PostgreSQL.
 
 A late event is therefore represented as:
 
@@ -78,14 +78,12 @@ A late event is therefore represented as:
 occurred_at < received_at
 ```
 
-Stage 03 proves that this timestamp is preserved. Ranking windows will deliberately use `occurred_at` in the analytics stage.
+Both SALE and REFUND preserve this distinction. Ranking windows will use `occurred_at` in the analytics stage.
 
-## Connectivity and realtime invalidation
+## Realtime invalidation
 
-A newly accepted sale also updates the store's `last_seen_at` to the event's database reception timestamp. After the database transaction commits, the API broadcasts an `events.changed` invalidation message.
-
-WebSocket messages remain non-authoritative: clients refetch REST state after an invalidation. Exact duplicate retries and conflicting requests do not broadcast a business-state change because they do not create a new event row.
+A newly accepted event updates store connectivity and commits before broadcasting `events.changed`. WebSocket messages remain invalidation-only: clients refetch authoritative REST state. Duplicate/conflicting/rejected requests do not broadcast a business-state change because they do not create a new event row.
 
 ## Test isolation
 
-Stage 03 integration tests exercise the real PostgreSQL ingestion path. Test events use a reserved `pytest:sale-ingestion:` source prefix and are removed by an async fixture. The fixture also restores each store's original `last_seen_at`, so a successful test run does not leave demo ranking/connectivity data behind.
+Integration tests use reserved `pytest:*` source prefixes, remove their own event rows and restore store `last_seen_at`. Refund cleanup deletes dependent refund rows before their test sales, respecting the self-referential foreign key. Verification should therefore not pollute future demo ranking data.

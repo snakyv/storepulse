@@ -29,19 +29,30 @@ class HeartbeatResponse(BaseModel):
     status: str
 
 
-class SaleEventCreate(BaseModel):
+class PosEventCreateBase(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     event_id: UUID
     store_code: str = Field(min_length=1, max_length=40)
     product_sku: str = Field(min_length=1, max_length=64)
-    event_type: Literal["SALE"]
     quantity: int = Field(gt=0, strict=True)
     amount_cents: int = Field(gt=0, strict=True)
     occurred_at: AwareDatetime
     source_instance: str = Field(min_length=1, max_length=120)
     metadata: dict[str, object] | None = None
     note: str | None = None
+
+
+class SaleEventCreate(PosEventCreateBase):
+    event_type: Literal["SALE"]
+
+
+class RefundEventCreate(PosEventCreateBase):
+    event_type: Literal["REFUND"]
+    original_event_id: UUID
+
+
+EventCreate = SaleEventCreate | RefundEventCreate
 
 
 class EventIngestResponse(BaseModel):

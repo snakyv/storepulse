@@ -33,3 +33,9 @@ Developer supplied the exact current StorePulse repository including the newly g
 Developer instruction: proceed after the verified baseline and implement the next isolated feature commit, `feat(events): add idempotent POS sale ingestion`, with PostgreSQL-enforced idempotency, exact duplicate handling, conflicting duplicate `409`, late `occurred_at` preservation and concurrency tests.
 
 Decision: keep PostgreSQL as the sole event authority and use `INSERT ... ON CONFLICT DO NOTHING` against the existing `event_id` primary key. Do not add Redis/Kafka or in-memory deduplication. Stage 03 accepts only validated SALE events; REFUND remains explicitly rejected until the dedicated refund-safety stage.
+
+## 2026-09-08 — Stage 04 safe refund processing
+
+Developer instruction: proceed with the next isolated commit, `feat(refunds): enforce safe refund processing`, implementing partial/full refunds, original-sale validation, cumulative limits and concurrency-safe over-refund protection as professionally as planned.
+
+Decision: model a refund as a separate immutable POS event referencing the original SALE. Serialize cumulative-limit decisions with PostgreSQL `SELECT ... FOR UPDATE` on that sale, re-check the refund event ID after any lock wait, keep primary-key/`ON CONFLICT` idempotency, add a new migration for database row-shape invariants, and defer ranking subtraction to the analytics stage rather than mixing aggregation into ingestion.
