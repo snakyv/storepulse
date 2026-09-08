@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
+$ProjectRoot = (Get-Location).Path
 
 function Run-Step([string]$Name, [scriptblock]$Command) {
     Write-Host ""
@@ -48,6 +49,11 @@ function Wait-ForBackend {
     throw "Backend did not become ready within 30 seconds."
 }
 
+python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)" *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Python 3.12+ is required on the host for verification helpers."
+}
+
 docker info *> $null
 if ($LASTEXITCODE -ne 0) {
     throw "Docker Engine is not available. Start Docker Desktop first."
@@ -69,11 +75,21 @@ Run-Step "Start PostgreSQL" { docker compose up -d postgres }
 Wait-ForPostgres
 Run-Step "Apply migrations" { docker compose run --rm --no-deps migrate }
 Run-Step "Seed deterministic demo data" { docker compose run --rm --no-deps seed }
-Run-Step "Backend Ruff" { docker compose run --rm --no-deps backend ruff check app tests }
+Run-Step "Project Ruff" {
+    docker compose run --rm --no-deps `
+        --volume "${ProjectRoot}:/workspace:ro" `
+        --workdir /workspace `
+        backend `
+        python scripts/run_ruff.py
+}
 Run-Step "Backend mypy" { docker compose run --rm --no-deps backend mypy app }
 Run-Step "Backend pytest" { docker compose run --rm --no-deps backend python -m pytest -q }
 Run-Step "Simulator compile" {
-    docker compose run --rm --no-deps simulator-madrid python -m compileall -q simulator
+    docker compose run --rm --no-deps simulator-madrid python -m compileall -q simulator tests
+}
+Run-Step "Simulator unit tests" {
+    docker compose run --rm --no-deps simulator-madrid `
+        python -m unittest discover -s tests -v
 }
 Run-Step "Frontend dependency tree" {
     docker compose run --rm --no-deps frontend npm ls --depth=0
@@ -103,6 +119,13 @@ if ($stores.Count -ne 5) {
     throw "Expected 5 seeded stores, got $($stores.Count)."
 }
 Write-Host "Seeded stores endpoint returned exactly 5 stores."
+
+Run-Step "Verification helper unit tests" {
+    python -m unittest discover -s scripts/tests -v
+}
+Run-Step "Five POS simulator traffic smoke" {
+    python scripts/verify_simulator_smoke.py
+}
 
 Write-Host ""
 Write-Host "Verification completed."

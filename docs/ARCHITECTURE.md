@@ -1,123 +1,133 @@
 # Architecture
 
-## Current components
+## System shape
+
+StorePulse remains a deliberately small monorepo:
 
 ```text
-Five POS simulator containers (heartbeat-only until Stage 05)
-          |
-          | HTTP heartbeat
-          v
-      FastAPI API <------ POST /api/v1/events from POS clients/tests
-       |       |
-       |       +---- WebSocket invalidation ----> Vue clients
-       |
-       +---- PostgreSQL
-             stores
-             products
-             pos_events
+five POS simulators ---- HTTP heartbeat / SALE / REFUND ----> FastAPI
+                                                              |
+Vue clients <---- REST + WebSocket invalidation --------------+
+                                                              |
+                                                              v
+                                                         PostgreSQL
 ```
 
-PostgreSQL is authoritative. WebSocket messages contain invalidation information only; clients refetch authoritative state through REST.
+PostgreSQL is the source of truth. The browser never treats WebSocket payloads as authoritative state; a socket message invalidates local data and the client refetches REST state.
 
-## Why this shape
+## Backend event authority
 
-The assignment requires separate backend/frontend, relational persistence, multiple simultaneous clients and realtime updates. A single FastAPI process plus PostgreSQL is sufficient for the assessment scale. Redis/Kafka are intentionally absent until horizontal scaling creates a real need.
+`POST /api/v1/events` accepts immutable SALE/REFUND events.
 
-## Durable schema
+Event identity is the PostgreSQL `pos_events.event_id` primary key. SALE ingestion uses PostgreSQL conflict handling rather than a process-local deduplication cache. Exact retries therefore converge on one durable row even when requests are concurrent.
 
-- `stores` — identity, timezone, daily target, responsible person, heartbeat timestamp.
-- `products` — stable product catalogue.
-- `pos_events` — append-only SALE/REFUND events with producer event time and server reception time.
+REFUND events reference an original SALE. Cumulative refund quantity and amount are protected by `SELECT ... FOR UPDATE` on the original-sale row. This serializes refund-limit decisions across concurrent requests and future application processes.
 
-Money is represented in integer minor units (`*_cents`). Persisted event timestamps use timezone-aware PostgreSQL timestamps.
+## Producer architecture
 
-Migration `20260908_0002_refund_invariants.py` adds database checks requiring SALE rows to have no original reference, REFUND rows to have one, and prohibiting self-reference.
-
-## Event identity and idempotency
-
-`event_id` is the event identity and PostgreSQL primary key. Both SALE and REFUND ingestion use PostgreSQL-specific `INSERT ... ON CONFLICT DO NOTHING` as the final concurrency authority.
+Stage 05 gives every simulator four independent responsibilities:
 
 ```text
-validate request
-    |
-    +-- existing event_id? -- yes --> compare immutable logical payload
-    |                                  | same      -> 200 duplicate
-    |                                  + different -> 409 conflict
-    |
-    +-- no --> event-specific validation
-               |
-               +-- INSERT ... ON CONFLICT DO NOTHING RETURNING received_at
-                      | inserted -> update store.last_seen_at -> COMMIT -> 201
-                      |
-                      + conflict -> re-read winner -> duplicate / 409
+heartbeat loop
+
+traffic clock
+   |
+   v
+SALE / REFUND generator
+   |
+   v
+bounded asyncio.Queue  <---- backpressure when delivery is slower
+   |
+   +----------> delivery worker 1 ----+
+   |                                  |
+   +----------> delivery worker N ----+---- HTTP /api/v1/events
+                                      |
+                                      +---- exact duplicate replay
 ```
 
-This avoids treating an application `SELECT-if-absent` check as authoritative. Concurrent identical requests can create only one primary-key row.
+The traffic clock uses an exponential inter-arrival distribution with configured mean events per second. Each store has its own Compose environment control.
 
-## Refund concurrency model
+### Immutable retry identity
 
-Refunds add a second concurrency invariant: cumulative refund quantity and amount must never exceed the original sale.
-
-The service locks the referenced SALE row with `SELECT ... FOR UPDATE` before reading cumulative refunds. Requests refunding the same sale therefore serialize their limit decisions, while refunds for unrelated sales remain independent.
+The simulator creates a complete JSON payload once. Retry logic receives that dictionary and resends it unchanged:
 
 ```text
-resolve store/product
-      |
-lock original SALE row FOR UPDATE
-      |
-re-check refund event_id after any lock wait
-      |
-validate original type + same store/product
-      |
-sum committed refunds for original SALE
-      |
-check remaining quantity and amount independently
-      |
-insert REFUND with event_id ON CONFLICT protection
-      |
-commit
+attempt 1: event_id=A, payload=P
+network/5xx ambiguity
+attempt 2: event_id=A, payload=P
 ```
 
-The post-lock event-ID re-check is essential: an identical retry may have been waiting while the first refund committed. Re-checking turns it into `200 duplicate` before cumulative limits are applied a second time.
-
-Cross-row rules such as original-event type, same store/product and cumulative limits remain transactional service invariants because row CHECK constraints cannot safely express them.
-
-See `docs/REFUNDS.md` for the full contract.
-
-## Event time
-
-The producer's timezone-aware `occurred_at` is stored independently from PostgreSQL-assigned `received_at` for both sales and refunds. Future analytics will filter/aggregate on `occurred_at`, allowing late delivery without moving the event into the reception-time window.
-
-## Startup order
+It never does this:
 
 ```text
-postgres healthy
-   -> alembic migrate
-      -> deterministic seed
-         -> backend healthy
-            -> frontend / optional demo simulators
+attempt 2: event_id=B
 ```
 
-## Realtime invalidation
+This is essential because a timeout can occur after the backend has committed. Reusing `(A, P)` lets the backend answer `duplicate`; generating `(B, P)` would create a double sale.
 
-A heartbeat commits `last_seen_at` and then broadcasts `stores.changed`.
+Retryable conditions are transport failures plus HTTP 408/425/429/5xx transient statuses. Backoff is exponential, capped and jittered. Non-retryable client errors are surfaced in logs instead of retried forever.
 
-A newly accepted SALE or REFUND commits the event plus updated store connectivity and then broadcasts `events.changed`. Exact duplicates and rejected requests do not broadcast a business-state change.
+### Queue and backpressure
 
-The Vue client treats these as invalidations and refetches REST state. This keeps PostgreSQL/REST authoritative and avoids maintaining a second ranking state inside WebSocket messages.
+The outbound event queue is bounded. When all delivery workers are slower than generation, `queue.put()` blocks the traffic loop. The producer therefore slows down rather than silently dropping generated events or allowing unbounded memory growth.
 
-## Async engine lifecycle
+Deliberate duplicates are not reinserted into that queue. A worker replays the exact payload directly after original success, preventing a bounded-queue deadlock in which every consumer could block while trying to enqueue more work.
 
-The backend owns one lazily created pooled SQLAlchemy `AsyncEngine` per process. FastAPI lifespan shutdown disposes it explicitly. The pytest suite mirrors that model with a session-scoped asyncio loop and explicit engine disposal before the loop closes.
+### Refund producer state
 
-## Deliberately deferred
+The simulator only knows about sales that it has successfully delivered. It keeps a small process-local ledger containing original event ID, SKU, unit price, original time and remaining refundable amount/quantity.
 
-The current architecture does not yet include:
+When generating a refund, remaining local capacity is reserved before the event is queued. If delivery ends in a permanent producer-side failure, that reservation is restored. This prevents local overbooking but does not replace backend validation.
 
-- POS sale/refund generation from simulators;
-- ranking queries and materialized aggregates;
-- persisted dashboard settings;
-- offline incident/outbox worker;
-- local-noon alert evaluation.
+The simulator ledger is intentionally not durable. PostgreSQL remains the correctness authority.
 
-Those are added only when their feature stages require them.
+### Late events
+
+For configured events, producer `occurred_at` is shifted into the past up to `MAX_LATE_SECONDS`; backend/database `received_at` remains independent. Refund event time is clamped so it is never earlier than its original sale.
+
+Stage 05 proves generation/persistence of late timestamps. Ranking assignment by `occurred_at` is verified in the analytics stage.
+
+## Five simulator instances
+
+Compose defines:
+
+```text
+simulator-madrid
+simulator-london
+simulator-new-york
+simulator-tokyo
+simulator-warsaw
+```
+
+Each service has its own store code, deterministic random seed and events-per-second setting. A readable service label, run tag and container hostname are stored in `source_instance`, so scaling a service does not collapse multiple producers into one source identity.
+
+## Realtime pattern
+
+Accepted events trigger an `events.changed` WebSocket invalidation. Exact duplicates do not broadcast false business changes. The Vue client coalesces bursty invalidations into bounded REST refreshes and never runs overlapping store refresh requests; ranking-specific refetch behavior is added in the analytics/UI stages.
+
+## Time and money
+
+- money remains integer cents;
+- event instants are timezone-aware;
+- producer `occurred_at` is preserved;
+- PostgreSQL assigns `received_at`;
+- store business timezones are IANA identifiers;
+- future `today` windows must convert each store's local midnight to UTC rather than assuming UTC midnight.
+
+## Verification architecture
+
+Local verification now includes:
+
+```text
+backend lint/type/tests
+simulator compile + unit tests
+frontend type/tests/build
+real backend API smoke
+five real POS simulator containers
+PostgreSQL durable traffic inspection
+verified producer stop + backend write barrier + transactional simulator cleanup
+```
+
+GitHub Actions invokes the same repository-wide Ruff runner and the same five-container Python smoke/cleanup harness as local verification, eliminating shell-specific target and lifecycle drift.
+
+See `EVENT_INGESTION.md`, `REFUNDS.md`, `SIMULATOR.md` and `REQUIREMENTS_TRACEABILITY.md` for feature-level contracts and current proof status.

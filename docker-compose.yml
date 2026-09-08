@@ -1,3 +1,31 @@
+x-simulator-base: &simulator-base
+  profiles: ["demo"]
+  build:
+    context: .
+    dockerfile: simulator/Dockerfile
+  depends_on:
+    backend:
+      condition: service_healthy
+  restart: unless-stopped
+
+x-simulator-environment: &simulator-environment
+  BACKEND_URL: http://backend:8000
+  RUN_TAG: ${SIMULATOR_RUN_TAG:-demo}
+  HEARTBEAT_INTERVAL: ${SIMULATOR_HEARTBEAT_INTERVAL:-5}
+  REFUND_RATE: ${SIMULATOR_REFUND_RATE:-0.20}
+  DUPLICATE_RATE: ${SIMULATOR_DUPLICATE_RATE:-0.08}
+  LATE_EVENT_RATE: ${SIMULATOR_LATE_EVENT_RATE:-0.10}
+  MAX_LATE_SECONDS: ${SIMULATOR_MAX_LATE_SECONDS:-7200}
+  MAX_QUANTITY: ${SIMULATOR_MAX_QUANTITY:-3}
+  REQUEST_TIMEOUT_SECONDS: ${SIMULATOR_REQUEST_TIMEOUT_SECONDS:-5}
+  RETRY_INITIAL_SECONDS: ${SIMULATOR_RETRY_INITIAL_SECONDS:-0.25}
+  RETRY_MAX_SECONDS: ${SIMULATOR_RETRY_MAX_SECONDS:-5}
+  RETRY_JITTER_RATIO: ${SIMULATOR_RETRY_JITTER_RATIO:-0.20}
+  MAX_RETRY_ATTEMPTS: ${SIMULATOR_MAX_RETRY_ATTEMPTS:-0}
+  QUEUE_SIZE: ${SIMULATOR_QUEUE_SIZE:-1000}
+  WORKER_COUNT: ${SIMULATOR_WORKER_COUNT:-2}
+  STATS_INTERVAL_SECONDS: ${SIMULATOR_STATS_INTERVAL_SECONDS:-30}
+
 services:
   postgres:
     image: postgres:17.11-alpine
@@ -68,69 +96,49 @@ services:
         condition: service_healthy
 
   simulator-madrid:
-    profiles: ["demo"]
-    build:
-      context: .
-      dockerfile: simulator/Dockerfile
+    <<: *simulator-base
     environment:
-      BACKEND_URL: http://backend:8000
+      <<: *simulator-environment
       STORE_CODE: MAD-MADRID
-      HEARTBEAT_INTERVAL: ${SIMULATOR_HEARTBEAT_INTERVAL:-5}
-    depends_on:
-      backend:
-        condition: service_healthy
+      INSTANCE_LABEL: simulator-madrid
+      EVENTS_PER_SECOND: ${SIMULATOR_MADRID_EVENTS_PER_SECOND:-1.0}
+      RANDOM_SEED: 101
 
   simulator-london:
-    profiles: ["demo"]
-    build:
-      context: .
-      dockerfile: simulator/Dockerfile
+    <<: *simulator-base
     environment:
-      BACKEND_URL: http://backend:8000
+      <<: *simulator-environment
       STORE_CODE: MAD-LONDON
-      HEARTBEAT_INTERVAL: ${SIMULATOR_HEARTBEAT_INTERVAL:-5}
-    depends_on:
-      backend:
-        condition: service_healthy
+      INSTANCE_LABEL: simulator-london
+      EVENTS_PER_SECOND: ${SIMULATOR_LONDON_EVENTS_PER_SECOND:-1.0}
+      RANDOM_SEED: 202
 
   simulator-new-york:
-    profiles: ["demo"]
-    build:
-      context: .
-      dockerfile: simulator/Dockerfile
+    <<: *simulator-base
     environment:
-      BACKEND_URL: http://backend:8000
+      <<: *simulator-environment
       STORE_CODE: MAD-NYC
-      HEARTBEAT_INTERVAL: ${SIMULATOR_HEARTBEAT_INTERVAL:-5}
-    depends_on:
-      backend:
-        condition: service_healthy
+      INSTANCE_LABEL: simulator-new-york
+      EVENTS_PER_SECOND: ${SIMULATOR_NYC_EVENTS_PER_SECOND:-1.0}
+      RANDOM_SEED: 303
 
   simulator-tokyo:
-    profiles: ["demo"]
-    build:
-      context: .
-      dockerfile: simulator/Dockerfile
+    <<: *simulator-base
     environment:
-      BACKEND_URL: http://backend:8000
+      <<: *simulator-environment
       STORE_CODE: MAD-TOKYO
-      HEARTBEAT_INTERVAL: ${SIMULATOR_HEARTBEAT_INTERVAL:-5}
-    depends_on:
-      backend:
-        condition: service_healthy
+      INSTANCE_LABEL: simulator-tokyo
+      EVENTS_PER_SECOND: ${SIMULATOR_TOKYO_EVENTS_PER_SECOND:-1.0}
+      RANDOM_SEED: 404
 
   simulator-warsaw:
-    profiles: ["demo"]
-    build:
-      context: .
-      dockerfile: simulator/Dockerfile
+    <<: *simulator-base
     environment:
-      BACKEND_URL: http://backend:8000
+      <<: *simulator-environment
       STORE_CODE: MAD-WARSAW
-      HEARTBEAT_INTERVAL: ${SIMULATOR_HEARTBEAT_INTERVAL:-5}
-    depends_on:
-      backend:
-        condition: service_healthy
+      INSTANCE_LABEL: simulator-warsaw
+      EVENTS_PER_SECOND: ${SIMULATOR_WARSAW_EVENTS_PER_SECOND:-1.0}
+      RANDOM_SEED: 505
 
 volumes:
   storepulse_pgdata:

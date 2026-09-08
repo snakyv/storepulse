@@ -1,34 +1,43 @@
 # Delivery roadmap
 
-Completed/published foundation work and verified Stage 03 SALE ingestion remain the base. Stage 04 safe refund processing has passed the full developer-machine verification gate and is ready for commit/push; its GitHub Actions run is still pending publication.
+Verified public work through Stage 04 is complete. Stage 05 now has a clean local end-to-end PASS: repository-wide Ruff, backend mypy/pytest, simulator tests, frontend checks, the five-producer traffic contract, duplicate persistence proof, deterministic cleanup, backend restart readiness, post-restart run isolation and store-state restoration all passed. The only remaining Stage 05 gate is publication: amend the existing feature commit with the verified candidate, push with `--force-with-lease`, and require the resulting GitHub Actions run to be green.
 
-## Stage 04 — local gate PASS, publication pending
+## Stage 05 — local PASS, GitHub Actions rerun pending
 
-Planned commit:
+Planned commit message (unchanged):
 
 ```text
-feat(refunds): enforce safe refund processing
+feat(simulator): generate resilient configurable POS traffic
 ```
 
-Scope:
+Final local evidence on 2026-09-09:
 
-- discriminated SALE/REFUND request contract on `POST /api/v1/events`;
-- required `original_event_id` for refunds;
-- original event must be a SALE;
-- refund store/product must match the original sale;
-- cumulative quantity and amount must each stay within original sale limits;
-- per-original `SELECT ... FOR UPDATE` serialization;
-- post-lock idempotency re-check for concurrent exact retries;
-- database-level SALE/REFUND original-reference invariants;
-- sequential and concurrent over-refund tests;
-- Docker CI smoke for accepted/duplicate/over-refund behavior.
+```text
+Project Ruff                         PASS
+Backend mypy                         PASS
+Backend pytest                       47 passed
+Simulator unit tests                 9 passed
+Verification helper tests            16 passed
+Frontend typecheck/Vitest/build      PASS
+Five producer stores                 PASS
+SALE rows                            20
+REFUND rows                          19
+Late rows                            39
+Exact duplicate replay               PASS
+Duplicate durable row count          1
+Backend write barrier                PASS
+Verification data cleanup            PASS
+Backend restart readiness            PASS
+Post-restart run isolation           PASS
+Store connectivity restore           PASS
+Verification completed               PASS
+```
 
-`scripts/verify.ps1` has passed on the developer machine (`47 passed` backend tests plus all frontend/build/API-smoke gates). The remaining Stage 04 publication steps are diff/staging review, the isolated feature commit, push, and a green GitHub Actions run.
+Immediate action: review the staged diff, amend the existing Stage 05 feature commit without changing its message, push with `--force-with-lease`, and wait for GitHub Actions. Do not start analytics until that workflow is green.
 
 ## Remaining isolated commits
 
 ```text
-feat(simulator): generate resilient configurable POS traffic
 feat(analytics): add timezone-aware store rankings
 feat(stores): add store insights and persisted settings
 feat(ui): build realtime ranking and store management dashboard
@@ -40,7 +49,7 @@ docs: finalize submission evidence and demo guide
 
 ## Delivery discipline
 
-Every stage follows the same gate:
+Every stage follows:
 
 ```text
 implement

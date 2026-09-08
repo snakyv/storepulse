@@ -15,12 +15,20 @@ let reconnectTimer: number | null = null
 let reconnectAttempt = 0
 let refreshTimer: number | null = null
 let pollingTimer: number | null = null
+let refreshInFlight = false
+let refreshPending = false
 let stopped = false
 
 const onlineCount = computed(() => stores.value.filter((store) => store.online).length)
 const websocketUrl = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8000/ws/dashboard'
 
 async function refreshStores(): Promise<void> {
+  if (refreshInFlight) {
+    refreshPending = true
+    return
+  }
+
+  refreshInFlight = true
   try {
     stores.value = await fetchStores()
     error.value = null
@@ -29,14 +37,20 @@ async function refreshStores(): Promise<void> {
     error.value = reason instanceof Error ? reason.message : 'Unknown API error'
   } finally {
     loading.value = false
+    refreshInFlight = false
+    if (refreshPending && !stopped) {
+      refreshPending = false
+      scheduleRefresh()
+    }
   }
 }
 
 function scheduleRefresh(): void {
-  if (refreshTimer !== null) {
-    window.clearTimeout(refreshTimer)
-  }
-  refreshTimer = window.setTimeout(() => void refreshStores(), 150)
+  if (refreshTimer !== null) return
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = null
+    void refreshStores()
+  }, 150)
 }
 
 function connectWebSocket(): void {
@@ -107,7 +121,7 @@ onBeforeUnmount(() => {
 
     <section class="notice">
       <strong>Foundation checkpoint.</strong>
-      Heartbeats, idempotent SALE ingestion and multi-client realtime invalidation are active. Sales ranking and analytics are intentionally the next phase.
+      Heartbeats, idempotent SALE/REFUND ingestion and realtime POS simulator invalidation are active. Sales ranking and analytics are intentionally the next phase.
     </section>
 
     <section class="summary-grid">

@@ -1,20 +1,12 @@
-# Project state — Stage 04 safe refund processing locally verified
+# Project state
 
-**Verified foundation:** checkpoint 00e
-**Foundation commit:** `a2bf2b7 chore: establish verified StorePulse foundation`
-**Verified feature base:** Stage 03 idempotent SALE ingestion passed the full developer-machine gate before publication.
-**Current feature:** `feat(refunds): enforce safe refund processing`
-**Date:** 2026-09-09
+## Current checkpoint
 
-## Current status
+Stage 04 safe REFUND processing has been locally verified, committed, pushed and confirmed green in GitHub Actions by the developer. **Stage 05 — resilient configurable POS traffic** now has a clean end-to-end local PASS, including repository-wide quality gates, five-producer business evidence, deterministic verification cleanup and backend state restoration.
 
-Stage 04 extends the verified SALE-ingestion base with idempotent REFUND events, original-sale validation, cumulative refund limits, PostgreSQL row locking and database-level reference invariants.
+Stage 05 is **LOCAL END-TO-END PASS / GITHUB ACTIONS RERUN PENDING**. The first published candidate exposed a CI-only repository-wide Ruff formatting failure. The hardening work subsequently centralized Ruff targets and simulator smoke/cleanup into shared cross-platform Python entrypoints used by both local verification and GitHub Actions. The final local run completed all gates successfully; the remaining publication step is to amend the existing Stage 05 commit and require the resulting GitHub Actions run to be green.
 
-The complete developer-machine verification gate has now passed against the pinned Docker/PostgreSQL environment, including migration `20260908_0002`, Ruff, mypy, the full backend test suite, frontend regression gates and the backend API smoke. The Stage 04 feature is therefore locally accepted and ready for its isolated commit. GitHub Actions for that commit remain **NOT TESTED** until the commit is pushed and the workflow actually completes.
-
-StorePulse remains incomplete as the full Case 5 solution: configurable POS traffic, rankings, store analytics/settings and alerting are later stages.
-
-## Implemented through locally verified Stage 04
+## Verified through Stage 04
 
 - Separate FastAPI/Vue services with PostgreSQL persistence and Docker Compose.
 - Deterministic five-store / ten-product seed.
@@ -27,58 +19,75 @@ StorePulse remains incomplete as the full Case 5 solution: configurable POS traf
 - Cumulative refunded quantity cannot exceed sale quantity.
 - Cumulative refunded amount cannot exceed sale amount.
 - Refund decisions for the same original sale are serialized with `SELECT ... FOR UPDATE`.
-- Event ID is re-checked after waiting for the original-sale lock so an identical concurrent retry returns duplicate instead of being double-counted against refund limits.
 - Exact REFUND replay returns `200 duplicate`; conflicting reuse of its `event_id` returns `409`.
-- Late REFUND preserves producer `occurred_at` independently from `received_at`.
-- Migration `20260908_0002_refund_invariants.py` adds database checks for SALE/REFUND original-reference shape and self-reference prevention.
-- New tests cover partial/full refunds, mismatched references, chained-refund rejection, sequential limit enforcement, exact duplicate behavior and concurrent over-refund races.
-- GitHub Actions Docker smoke is extended to exercise real HTTP SALE + REFUND accepted/duplicate/over-limit behavior after publication.
+- Late SALE/REFUND timestamps preserve producer `occurred_at` independently from `received_at`.
+- Migration `20260908_0002_refund_invariants.py` adds database reference-shape constraints.
+- Developer-machine Stage 04 verification passed with `47 passed` backend tests and all existing frontend/build/API-smoke gates.
+- The developer confirmed the Stage 04 GitHub Actions run green after publication.
 
-## Stage 04 verification
+## Stage 05 candidate scope
 
-Developer-machine verification on Windows + Docker Desktop:
+- five real POS producers instead of heartbeat-only containers;
+- per-store configurable `EVENTS_PER_SECOND`;
+- valid SALE traffic using seeded SKUs and integer-cents totals;
+- safe REFUND generation only against producer-acknowledged sales;
+- local refund-capacity reservation before queueing;
+- exact duplicate replay with the same payload/event ID;
+- late `occurred_at` generation;
+- retryable transport classification;
+- retry with the same immutable payload;
+- exponential backoff with jitter;
+- bounded queue/backpressure instead of silent event dropping;
+- independent heartbeat loop;
+- distinct `source_instance` identity per container;
+- simulator unit tests;
+- five-container PostgreSQL traffic smoke in local verification and GitHub Actions.
 
-- Docker image build: PASS.
-- PostgreSQL readiness: PASS.
-- Alembic upgrade `20260908_0001 -> 20260908_0002`: PASS.
-- Deterministic seed: PASS.
-- Ruff: PASS.
-- mypy: PASS (`10 source files`).
-- Backend pytest: PASS (`47 passed`).
-- Simulator compile: PASS.
-- Frontend dependency/version checks: PASS.
-- Frontend typecheck: PASS.
-- Frontend Vitest: PASS (`2 passed`).
-- Frontend production build: PASS.
-- Backend readiness: PASS.
-- Seeded-store API smoke: PASS (exactly five stores).
-- Complete `scripts/verify.ps1`: PASS.
+## Stage 05 verification status
 
-Artifact-generation checks performed before the developer run also passed Python compile, database-independent pytest (`16 passed` with integration tests deselected), FastAPI OpenAPI generation and SALE/REFUND discriminator/response-contract inspection.
+Final developer-machine full gate on 2026-09-09:
 
-Publication status: local Stage 04 gate PASS; GitHub Actions remain NOT TESTED until the feature commit is pushed.
+- Compose validation/build: PASS;
+- PostgreSQL readiness, migrations and deterministic seed: PASS;
+- repository-wide Ruff: PASS;
+- backend mypy: PASS (`10 source files`);
+- backend pytest: PASS (`47 passed`);
+- simulator compile: PASS;
+- simulator unit tests: PASS (`9 passed`);
+- shared verification-helper tests: PASS (`16 passed`);
+- frontend typecheck/Vitest/build: PASS (`2` Vitest tests);
+- backend readiness and seeded five-store API smoke: PASS;
+- POS traffic observed from exactly five stores: PASS;
+- isolated verification run: `verify-dd56b81aafad`;
+- verification-run durable traffic: `20` SALE, `19` REFUND, `39` late rows;
+- exact duplicate replay observed: PASS;
+- replayed `event_id` durable row count: `1`;
+- backend write barrier: PASS;
+- simulator verification-data cleanup: PASS;
+- backend restart readiness: PASS;
+- post-restart run isolation: PASS;
+- store connectivity restore: PASS;
+- final `Verification completed.`: PASS.
 
-## Requirements still not complete after Stage 04
+The first published Stage 05 candidate's GitHub Actions run was not green because CI caught repository-wide Ruff import-order findings that the older local gate did not cover. That parity defect and the later cleanup-harness defects have been structurally corrected. Local and CI now share `scripts/run_ruff.py` and `scripts/verify_simulator_smoke.py`. Stage 05 is locally verified; one amended push and one green GitHub Actions run remain before public completion is claimed.
 
-Safe refund ingestion is a prerequisite for later metrics, but Stage 04 does not yet implement:
+## Still incomplete after the Stage 05 candidate
 
-- simulator-generated SALE/REFUND traffic and configurable intensity;
-- ranking by revenue, sales count and average check;
-- refund subtraction from ranking metrics;
+- ranking by revenue, effective sales count and average check;
+- refunds decreasing ranking metrics;
 - rolling last-hour and per-store local-day windows;
-- leader/outsider/dynamics;
+- leader/outsider and dynamics;
 - store detail analytics and persisted settings;
 - offline incident lifecycle and notification outbox;
 - local-noon behind-plan alerts;
-- final five-producer load proof;
-- automated Playwright two-client ranking proof.
+- final measured five-producer no-loss/load proof;
+- automated Playwright two-client ranking proof;
+- restart proof for today's ranking.
 
-## Next delivery block
+## Next commit after Stage 05
 
-After committing/pushing this locally verified Stage 04 feature and confirming green GitHub Actions, the next isolated feature commit is:
+Once the existing Stage 05 commit is amended with the locally verified candidate and GitHub Actions is green:
 
 ```text
-feat(simulator): generate resilient configurable POS traffic
+feat(analytics): add timezone-aware store rankings
 ```
-
-See `docs/NEXT_STEPS.md` for the complete roadmap.

@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
   pull_request:
@@ -7,6 +10,7 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:17.11-alpine
@@ -29,8 +33,8 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12.14"
           cache: pip
@@ -44,22 +48,31 @@ jobs:
       - name: Seed deterministic data
         run: python -m app.seed
       - name: Ruff
-        run: ruff check app tests ../simulator/simulator
+        run: python ../scripts/run_ruff.py
+      - name: Verification helper unit tests
+        env:
+          PYTHONPATH: ..
+        run: python -m unittest discover -s ../scripts/tests -v
       - name: Mypy
         run: mypy app
       - name: Pytest
         run: python -m pytest -q
       - name: Compile simulator
-        run: python -m compileall -q ../simulator/simulator
+        run: python -m compileall -q ../simulator/simulator ../simulator/tests
+      - name: Simulator unit tests
+        env:
+          PYTHONPATH: ../simulator
+        run: python -m unittest discover -s ../simulator/tests -v
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.23.2"
           cache: npm
@@ -77,8 +90,12 @@ jobs:
 
   docker-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.14"
       - name: Prepare local environment file
         run: cp .env.example .env
       - name: Validate Compose configuration
@@ -182,9 +199,11 @@ jobs:
           assert over_refund_status == 409, (over_refund_status, over_refund_body)
           assert over_refund_body["detail"] == "refund exceeds remaining sale amount", over_refund_body
           PY
+      - name: Smoke-test five POS simulators
+        run: python scripts/verify_simulator_smoke.py
       - name: Show service state
         if: always()
-        run: docker compose ps
+        run: docker compose --profile demo ps
       - name: Tear down
         if: always()
         run: docker compose down -v

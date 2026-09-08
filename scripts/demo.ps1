@@ -10,7 +10,7 @@ if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
 }
 
-Write-Host "Starting five heartbeat simulator instances..."
+Write-Host "Starting five POS simulator instances..."
 docker compose --profile demo up -d --build `
     simulator-madrid `
     simulator-london `
@@ -18,5 +18,8 @@ docker compose --profile demo up -d --build `
     simulator-tokyo `
     simulator-warsaw
 
-Write-Host "Five simulators are running. Open http://localhost:5173 in one or two tabs."
+Write-Host "Five POS simulators are running."
+Write-Host "They emit SALE/REFUND traffic, late events and exact duplicate replays."
+Write-Host "Tune per-store intensity and traffic rates in .env."
+Write-Host "Frontend: http://localhost:5173"
 docker compose --profile demo ps
