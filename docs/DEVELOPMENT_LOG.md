@@ -91,3 +91,23 @@ Relevant commit:
 **Result:** PARTIAL PASS — root cause corrected in source; full 00e runtime verification remains required.
 
 **Relevant commit:** none; do not commit until checkpoint 00e verification completes.
+
+---
+
+## 2026-09-08 21:06–21:28 +03:00 — Checkpoint 00e fully verified and foundation published
+
+**Goal:** establish a real, reproducible foundation baseline before starting POS business functionality.
+
+**Work completed:** checkpoint 00e was applied to the local repository and the full verification pipeline completed successfully. The developer then started the application and five heartbeat simulators, verified all five simulator containers running concurrently and receiving successful heartbeat responses, manually confirmed automatic updates in two browser tabs, restarted the backend and confirmed the five seeded stores remained available, deleted the project PostgreSQL volume and successfully bootstrapped from an empty state, and reran the complete verification pipeline after that clean bootstrap.
+
+**AI contribution:** prepared checkpoint 00e, diagnosed the previous cross-event-loop asyncpg test failure, aligned the SQLAlchemy/pytest async lifecycle and helped define the runtime proof sequence. The developer executed and supplied the resulting evidence.
+
+**Developer decisions:** accept checkpoint 00e as the verified foundation only after both the automated quality gate and the manual multi-client/restart/clean-bootstrap scenarios passed; keep PostgreSQL as the source of truth and WebSocket messages as invalidation signals; do not claim sales/ranking/refund requirements before those features exist.
+
+**Verification actually executed:** Docker build: PASS; PostgreSQL readiness: PASS; Alembic migration: PASS; deterministic seed: PASS; Ruff: PASS; mypy: PASS; backend pytest: PASS (`10 passed`); simulator compile: PASS; frontend dependency/version checks: PASS; frontend typecheck: PASS; frontend Vitest: PASS (`2 passed`); frontend production build: PASS; backend readiness/API smoke: PASS; five concurrent heartbeat simulators: PASS; two-tab automatic connectivity refresh: PASS; backend restart persistence for seeded store state: PASS; clean-volume bootstrap: PASS; complete verification rerun after clean bootstrap: PASS.
+
+**Publication:** committed as `a2bf2b7 chore: establish verified StorePulse foundation`, pushed to `origin/main`, with the corresponding GitHub Actions workflow confirmed green by the developer.
+
+**Result:** PASS — checkpoint 00e is the accepted foundation baseline. Remaining Case 5 business requirements continue as separate feature commits.
+
+**Relevant commit:** `a2bf2b7 chore: establish verified StorePulse foundation`.

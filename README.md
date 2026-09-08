@@ -2,29 +2,30 @@
 
 StorePulse is the incremental engineering implementation for the Mad Devs Junior Agentic Developer take-home, Case 5: **Store Ranking**.
 
-This checkpoint intentionally implements only the verified foundation required for later POS-event, ranking and alerting work. It is **not** the finished assignment.
+The repository currently contains a **verified foundation baseline** for the later POS-event, ranking, refund and alerting work. It is intentionally not presented as the finished assignment.
 
-**Revision note (2026-09-08, checkpoint 00e):** the developer-machine rerun of checkpoint 00d proved Docker image builds, PostgreSQL startup, migrations, deterministic seed, Ruff and mypy. Backend pytest reached `9 passed / 1 failed`; the remaining failure was caused by a pooled SQLAlchemy `AsyncEngine` being reused by pytest across different function-scoped asyncio event loops. Checkpoint 00e aligns the async test suite to one session-scoped event loop (matching the single-loop application model), adds explicit engine disposal, requires the committed npm lockfile, strengthens PostgreSQL readiness handling in local verification and keeps CI aligned with the same pinned runtimes. The complete Docker verification must be rerun before the first commit.
+**Verified baseline (2026-09-08, checkpoint 00e):** the complete local verification pipeline passed on Windows + Docker Desktop, including Docker image builds, PostgreSQL readiness, Alembic migrations, deterministic seed, Ruff, mypy, `10/10` backend tests, simulator compilation, pinned frontend dependency checks, Vue typecheck, `2/2` Vitest tests, production build and a five-store API smoke test. The developer also verified five simultaneous heartbeat simulator containers, automatic updates in two browser tabs, backend-restart persistence, and a clean bootstrap after deleting the project PostgreSQL volume. The same baseline was committed as `a2bf2b7 chore: establish verified StorePulse foundation`, pushed to `origin/main`, and the corresponding GitHub Actions run was confirmed green by the developer.
 
-## Implemented in this scaffold
+## Implemented in the verified foundation
 
 - FastAPI backend with liveness and PostgreSQL readiness endpoints.
 - PostgreSQL persistence and Alembic initial migration.
 - Initial relational schema for stores, products and POS events.
 - Idempotent deterministic seed with five demo stores and ten products.
 - Store list endpoint and heartbeat endpoint.
-- WebSocket invalidation channel; heartbeat changes can refresh multiple open clients without manual reload.
+- WebSocket invalidation channel; heartbeat changes refresh multiple open clients without manual reload.
 - Vue 3 + TypeScript dashboard shell showing store connectivity.
 - Five Docker Compose simulator services that currently send heartbeats only.
 - Local PowerShell workflow and GitHub Actions quality checks.
 - Pinned frontend dependency graph through `package-lock.json` and `npm ci`.
-- Initial AI-usage, development, architecture and requirements-traceability documentation.
+- AI-usage, development, architecture and requirements-traceability documentation.
+- Cross-platform line-ending policy through `.gitattributes`.
 
 ## Explicitly not implemented yet
 
-Sales ingestion, duplicate/conflict handling, refunds, ranking analytics, late-event correction, offline incidents, notification outbox, midday plan alerts, store detail analytics, settings UI and final E2E/load/restart proofs.
+Sales ingestion, duplicate/conflict handling, refunds, ranking analytics, late-event correction, offline incidents, notification outbox, midday plan alerts, store detail analytics, persisted settings UI and the final concurrency/E2E/restart proof for ranking behavior.
 
-See `docs/PROJECT_STATE.md` and `docs/NEXT_STEPS.md`.
+See `docs/PROJECT_STATE.md`, `docs/REQUIREMENTS_TRACEABILITY.md` and `docs/NEXT_STEPS.md`.
 
 ## Prerequisites
 
@@ -35,13 +36,13 @@ Verified target environment:
 - Node.js 22 / npm 10 for optional host frontend work
 - Docker Desktop with Docker Compose
 
-Pinned container/CI runtimes for this checkpoint:
+Pinned container/CI runtimes for this baseline:
 
 - Python `3.12.14`
 - Node `22.23.2`
 - PostgreSQL `17.11-alpine`
 
-Ports expected by the scaffold:
+Ports expected by the project:
 
 - Frontend: `5173`
 - Backend: `8000`
@@ -70,7 +71,7 @@ Start the five heartbeat simulators:
 .\scripts\demo.ps1
 ```
 
-Within roughly one heartbeat interval, the five store cards should show `ONLINE`. Open the dashboard in two tabs: heartbeat-triggered WebSocket invalidations should refresh both tabs.
+Within roughly one heartbeat interval, the five store cards should show `ONLINE`. Open the dashboard in two tabs: heartbeat-triggered WebSocket invalidations and the fallback refresh keep both tabs synchronized.
 
 ## Local verification
 
@@ -92,13 +93,26 @@ The verification script:
 
 The script uses Docker, so local PostgreSQL, `psql`, Poetry, pnpm, Redis, Kafka and Make are not required.
 
+## Verified runtime scenarios
+
+The foundation baseline has also been exercised outside the automated quality gate:
+
+- five heartbeat simulator containers running concurrently;
+- all five simulators receiving `200 OK` from the heartbeat endpoint;
+- two browser tabs updating automatically when store connectivity changes;
+- five seeded stores still present after a backend restart;
+- clean bootstrap after `docker compose --profile demo down -v`;
+- complete `scripts/verify.ps1` pass again after the clean bootstrap.
+
+These proofs cover the current connectivity/persistence foundation only. They do **not** claim that sales ranking, refund behavior or ranking restart persistence are complete before those features exist.
+
 ## Stop
 
 ```powershell
 .\scripts\stop.ps1
 ```
 
-Database data is preserved. To intentionally delete project data later, use `docker compose down -v` only after understanding that it removes the StorePulse PostgreSQL volume.
+Database data is preserved. To intentionally delete project data, use `docker compose down -v` only after understanding that it removes the StorePulse PostgreSQL volume.
 
 ## Architecture
 
@@ -114,13 +128,21 @@ More detail: `docs/ARCHITECTURE.md`.
 
 ## Git history
 
-Generated checkpoints intentionally contain no fabricated `.git` history. The developer's real local repository is preserved when applying checkpoint updates. Make the first commit only after the complete local verification succeeds.
+The real public history starts from the verified baseline rather than from generated fake chronology.
 
-Suggested first commit after successful local verification:
+Current foundation commit:
 
 ```text
-chore: bootstrap StorePulse foundation
+a2bf2b7 chore: establish verified StorePulse foundation
 ```
+
+The next documentation-only commit records the completed verification evidence and delivery roadmap:
+
+```text
+docs: record verified baseline and delivery roadmap
+```
+
+Feature work will then proceed in isolated, tested commits; see `docs/NEXT_STEPS.md`.
 
 ## Dependency reproducibility
 

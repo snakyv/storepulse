@@ -1,0 +1,25 @@
+# Keep repository text files deterministic across Windows development and Linux containers/CI.
+* text=auto
+
+# Source, configuration, documentation and lockfiles use LF in the repository and checkout.
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.vue text eol=lf
+*.ts text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.ini text eol=lf
+*.mako text eol=lf
+*.txt text eol=lf
+Dockerfile text eol=lf
+.env.example text eol=lf
+.gitignore text eol=lf
+.dockerignore text eol=lf
+.gitattributes text eol=lf
+
+# PowerShell scripts use native Windows line endings when checked out on Windows.
+*.ps1 text eol=crlf

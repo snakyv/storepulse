@@ -1,4 +1,12 @@
-# Project state — scaffold checkpoint 00e
+# Project state — verified foundation baseline
+
+**Baseline:** checkpoint 00e
+**Verified commit:** `a2bf2b7 chore: establish verified StorePulse foundation`
+**Date:** 2026-09-08
+
+## Current status
+
+The infrastructure/connectivity foundation is verified locally and in GitHub Actions. StorePulse is still intentionally incomplete as a Case 5 solution: POS sales, refunds, rankings, store analytics and alerting are the next implementation stages.
 
 ## Implemented in source
 
@@ -11,69 +19,68 @@
 - Initial schema for stores, products and POS events.
 - Deterministic idempotent seed: five stores, ten products.
 - Python unit/integration tests, frontend unit tests, GitHub Actions workflow and PowerShell verification workflow.
-- Committed frontend `package-lock.json`; Docker and CI now require `npm ci`.
+- Committed frontend `package-lock.json`; Docker and CI require `npm ci`.
+- Explicit async SQLAlchemy engine disposal and pytest session-loop lifecycle.
+- Cross-platform line-ending policy in `.gitattributes`.
 
-## Real developer-machine verification — checkpoint 00d, 2026-09-08
+## Verified developer-machine evidence — checkpoint 00e
 
-The supplied Windows + Docker Desktop logs prove:
+The supplied Windows + Docker Desktop logs prove the following for the current foundation:
 
-- Exact checkpoint 00d synchronization into the local repository: **PASS**.
-- Git remote corrected to `https://github.com/snakyv/storepulse.git`: **PASS**.
-- `frontend/package-lock.json` generated in Node `22.23.2-alpine`: **PASS**.
-- npm resolution audit at lock generation: **PASS** (`0 vulnerabilities` reported by npm at that time).
-- Docker verification images (backend/migrate/seed/frontend/simulator): **PASS**.
-- PostgreSQL `17.11-alpine` startup: **PASS**.
+- Checkpoint 00e synchronization into the local repository: **PASS**.
+- Docker verification image build: **PASS**.
+- PostgreSQL `17.11-alpine` readiness: **PASS**.
 - Alembic migration: **PASS**.
 - Deterministic seed: **PASS**.
 - Ruff: **PASS**.
 - mypy: **PASS** (`9 source files`).
-- Backend pytest: **FAIL** with `1 failed, 9 passed`.
+- Backend pytest: **PASS** (`10 passed`).
+- Simulator compilation: **PASS**.
+- Frontend dependency tree/version checks: **PASS**.
+- Frontend typecheck: **PASS**.
+- Frontend Vitest: **PASS** (`2 passed`).
+- Frontend production build: **PASS**.
+- Backend readiness smoke test: **PASS**.
+- Seeded stores API smoke test: **PASS** (exactly five stores).
+- Five simulator containers running concurrently: **PASS**.
+- Heartbeat delivery from all five simulators: **PASS** (`200 OK`).
+- Two-browser-tab automatic connectivity refresh: **PASS** (developer manual verification).
+- Backend restart persistence for seeded store state: **PASS** (`5` stores before and after restart).
+- Clean bootstrap after deleting the StorePulse PostgreSQL volume: **PASS**.
+- Full verification rerun after clean bootstrap: **PASS**.
 
-The failing test itself was not a bad `404` assertion. The traceback proves a pooled asyncpg connection created in one pytest asyncio loop was reused from another loop: `Future ... attached to a different loop`. The suite previously used pytest-asyncio's default function-scoped event loop while the application intentionally keeps one pooled `AsyncEngine` per process.
+The developer then committed the verified baseline as `a2bf2b7`, pushed it to `origin/main`, and confirmed the corresponding GitHub Actions workflow completed successfully.
 
-Because `verify.ps1` is fail-fast, frontend dependency/typecheck/unit/build gates were **not reached** during that run. The frontend image itself did build successfully using the new lockfile.
+## What the verified foundation does not prove yet
 
-## Checkpoint 00e corrections awaiting developer re-run
+The current runtime proofs are deliberately scoped to the foundation. They do not yet prove employer requirements that depend on business functionality which has not been implemented:
 
-- `pytest-asyncio` test and async-fixture loop scope set to `session`, matching the single-event-loop application process.
-- Added explicit `dispose_engine()` that closes the async SQLAlchemy pool and resets lazy engine/session-factory globals.
-- FastAPI lifespan now disposes the engine during graceful application shutdown.
-- Added a session-scoped pytest teardown fixture so pooled asyncpg connections are disposed before pytest closes its session event loop.
-- `verify.ps1` now waits explicitly for PostgreSQL readiness before running migration/seed commands with `--no-deps`.
-- `verify.ps1` requires the committed frontend lockfile and adds an API smoke check after all code-quality gates.
-- Frontend Docker installation now always uses `npm ci`; the fallback `npm install` path was removed.
-- GitHub Actions frontend installation now always uses `npm ci` and caches from the committed lockfile.
-- GitHub Actions Python runtime aligned to exact Python `3.12.14`.
-- TypeScript compiler settings now also reject unused locals, unused parameters and switch fallthrough.
-- Documentation updated to stop claiming the lockfile is absent and to record the actual 00d failure.
+- sales-event ingestion and API-level idempotency/conflicting duplicate semantics;
+- refund validation and over-refund protection;
+- ranking by revenue, sales count and average check;
+- rolling last-hour and per-store local-day windows;
+- late-event correction based on `occurred_at`;
+- leader/outsider/dynamics;
+- store detail analytics and persisted settings;
+- offline incident lifecycle and notification outbox;
+- local-noon behind-plan alerts;
+- ranking persistence across restart;
+- final five-producer concurrency/load proof;
+- automated Playwright two-client ranking proof.
 
-These 00e changes are **NOT YET CLAIMED PASS** until `scripts/verify.ps1` is rerun on the developer machine.
+## Known foundation limitations
 
-## Generation-environment checks for checkpoint 00e
+- The five simulator services send heartbeats only; they do not yet generate POS sales/refunds.
+- The current frontend is a connectivity foundation, not the final ranking product UI.
+- PostgreSQL is already the source of truth, but ranking persistence cannot be claimed until ranking exists.
+- The two-tab manual proof validates the realtime transport/refetch foundation, not yet live sales ranking.
 
-- Python syntax/bytecode compilation over backend, tests and simulator: **PASS**.
-- Database-independent Python tests: **PASS** (`7 passed`).
-- `frontend/package.json`, `package-lock.json` and `tsconfig.json` JSON parse: **PASS**.
-- `docker-compose.yml` and GitHub Actions YAML parse: **PASS**.
-- Frontend lockfile root metadata matches `package.json`: **PASS**.
-- `.env`, `.git`, `.idea`, caches, `node_modules` and build outputs excluded from the generated checkpoint: **PASS**.
-- Full Docker/PostgreSQL/npm runtime verification: **NOT AVAILABLE** in the generation environment, therefore not claimed.
+## Next delivery block
 
-## Not implemented
+The next feature commit is intentionally focused on the core event contract:
 
-- Sale/refund ingestion API and business validation.
-- Idempotency/conflicting duplicate behavior at API level.
-- Analytics and ranking queries.
-- Late-event corrections.
-- Offline incidents and notification outbox.
-- Midday target alerts.
-- Settings editing and store detail pages.
-- Email emulator.
-- Playwright two-tab test.
-- Load/concurrency/restart proof.
+```text
+feat(events): add idempotent POS sale ingestion
+```
 
-## Known scaffold limitations
-
-- Five simulator services send heartbeats only; they intentionally do not fake completed POS behavior.
-- Current frontend is a foundation dashboard, not the final product UI.
-- Frontend has typecheck, Vitest and build gates; a dedicated ESLint gate can be added before final submission if it remains useful after the UI grows.
+See `docs/NEXT_STEPS.md` for the complete staged commit roadmap.
