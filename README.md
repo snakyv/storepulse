@@ -2,7 +2,7 @@
 
 StorePulse is the incremental engineering implementation for the Mad Devs Junior Agentic Developer take-home, Case 5: **Store Ranking**.
 
-The repository currently contains a **verified foundation baseline** for the later POS-event, ranking, refund and alerting work. It is intentionally not presented as the finished assignment.
+The repository contains a **verified foundation baseline** plus the Stage 03 idempotent SALE-ingestion implementation. It is intentionally not presented as the finished assignment. Stage 03 has passed the full developer-machine verification gate and is ready for its feature commit; the corresponding GitHub Actions run remains the publication gate after push.
 
 **Verified baseline (2026-09-08, checkpoint 00e):** the complete local verification pipeline passed on Windows + Docker Desktop, including Docker image builds, PostgreSQL readiness, Alembic migrations, deterministic seed, Ruff, mypy, `10/10` backend tests, simulator compilation, pinned frontend dependency checks, Vue typecheck, `2/2` Vitest tests, production build and a five-store API smoke test. The developer also verified five simultaneous heartbeat simulator containers, automatic updates in two browser tabs, backend-restart persistence, and a clean bootstrap after deleting the project PostgreSQL volume. The same baseline was committed as `a2bf2b7 chore: establish verified StorePulse foundation`, pushed to `origin/main`, and the corresponding GitHub Actions run was confirmed green by the developer.
 
@@ -10,7 +10,10 @@ The repository currently contains a **verified foundation baseline** for the lat
 
 - FastAPI backend with liveness and PostgreSQL readiness endpoints.
 - PostgreSQL persistence and Alembic initial migration.
-- Initial relational schema for stores, products and POS events.
+- Relational schema for stores, products and POS events.
+- `POST /api/v1/events` SALE ingestion with PostgreSQL-authoritative `event_id` idempotency.
+- Exact duplicate retries return `200 duplicate`; conflicting reuse of an `event_id` returns `409`.
+- Timezone-aware `occurred_at` is preserved independently from database-assigned `received_at`.
 - Idempotent deterministic seed with five demo stores and ten products.
 - Store list endpoint and heartbeat endpoint.
 - WebSocket invalidation channel; heartbeat changes refresh multiple open clients without manual reload.
@@ -23,7 +26,7 @@ The repository currently contains a **verified foundation baseline** for the lat
 
 ## Explicitly not implemented yet
 
-Sales ingestion, duplicate/conflict handling, refunds, ranking analytics, late-event correction, offline incidents, notification outbox, midday plan alerts, store detail analytics, persisted settings UI and the final concurrency/E2E/restart proof for ranking behavior.
+Refund validation, ranking analytics, late-event ranking correction, offline incidents, notification outbox, midday plan alerts, store detail analytics, persisted settings UI and the final concurrency/E2E/restart proof for ranking behavior.
 
 See `docs/PROJECT_STATE.md`, `docs/REQUIREMENTS_TRACEABILITY.md` and `docs/NEXT_STEPS.md`.
 
@@ -117,14 +120,16 @@ Database data is preserved. To intentionally delete project data, use `docker co
 ## Architecture
 
 ```text
-heartbeat simulators --HTTP--> FastAPI --transaction--> PostgreSQL
+heartbeat simulators --HTTP--> FastAPI <--SALE events-- POS clients/tests
+                                 |
+                                 +--transaction--> PostgreSQL
                                  |
                                  +--WebSocket invalidation--> Vue clients
 ```
 
 PostgreSQL is authoritative; WebSocket messages only tell clients to refetch current state. The backend owns one lazily created async SQLAlchemy engine per process and disposes it on application shutdown.
 
-More detail: `docs/ARCHITECTURE.md`.
+More detail: `docs/ARCHITECTURE.md` and `docs/EVENT_INGESTION.md`.
 
 ## Git history
 
@@ -136,13 +141,13 @@ Current foundation commit:
 a2bf2b7 chore: establish verified StorePulse foundation
 ```
 
-The next documentation-only commit records the completed verification evidence and delivery roadmap:
+The verified-baseline documentation commit is followed by the Stage 03 feature commit:
 
 ```text
-docs: record verified baseline and delivery roadmap
+feat(events): add idempotent POS sale ingestion
 ```
 
-Feature work will then proceed in isolated, tested commits; see `docs/NEXT_STEPS.md`.
+The Stage 03 implementation passed the full local verification gate before commit. GitHub Actions validates the published commit independently. See `docs/NEXT_STEPS.md`.
 
 ## Dependency reproducibility
 

@@ -111,3 +111,23 @@ Relevant commit:
 **Result:** PASS — checkpoint 00e is the accepted foundation baseline. Remaining Case 5 business requirements continue as separate feature commits.
 
 **Relevant commit:** `a2bf2b7 chore: establish verified StorePulse foundation`.
+
+---
+
+## 2026-09-08 22:25–22:31 +03:00 — Stage 03 idempotent SALE ingestion locally verified
+
+**Goal:** establish the first business write path with PostgreSQL-authoritative idempotency before implementing refunds, simulators or ranking analytics.
+
+**Work completed:** added `POST /api/v1/events` for SALE events; strict request validation; exact-duplicate `200` semantics; conflicting same-`event_id` `409`; PostgreSQL `INSERT ... ON CONFLICT DO NOTHING` authority; unknown reference handling; independent `occurred_at`/`received_at`; accepted-sale connectivity update; `events.changed` invalidation; PostgreSQL cleanup-aware integration tests; concurrent identical/conflicting request tests; Stage 03 architecture/contract documentation; and an actual HTTP accepted/duplicate/conflict smoke scenario in GitHub Actions.
+
+**AI contribution:** designed and implemented the Stage 03 candidate, kept PostgreSQL as the idempotency authority, isolated test data from demo state, documented deferred refund behavior explicitly and prepared concurrency tests that exercise the real database path.
+
+**Developer decisions:** keep the existing published initial migration unchanged because the required `pos_events` identity/timestamp columns already exist; do not implement half-safe refunds in the SALE stage; preserve REST as authoritative state and use WebSocket only for invalidation; do not start Stage 04 until this feature commit is pushed and its GitHub Actions run is green.
+
+**Verification actually executed on the developer machine:** Stage 03 synchronization: PASS; `git diff --check`: PASS; Docker image build: PASS; PostgreSQL readiness: PASS; Alembic migration: PASS; deterministic seed: PASS; Ruff: PASS; mypy: PASS (`10 source files`); backend pytest: PASS (`25 passed`); simulator compile: PASS; frontend dependency/version checks: PASS; frontend typecheck: PASS; frontend Vitest: PASS (`2 passed`); frontend production build: PASS; backend readiness: PASS; seeded stores API smoke: PASS (exactly five stores); full `scripts/verify.ps1`: PASS.
+
+**Publication status:** local feature gate PASS. GitHub Actions for this Stage 03 commit is not claimed until the commit is pushed and the workflow actually completes.
+
+**Result:** PASS for the local Stage 03 gate — ready to commit as the isolated SALE-ingestion feature.
+
+**Relevant commit:** planned `feat(events): add idempotent POS sale ingestion`; exact commit SHA is intentionally not invented before commit creation.

@@ -1,86 +1,100 @@
-# Project state — verified foundation baseline
+# Project state — Stage 03 idempotent SALE ingestion
 
-**Baseline:** checkpoint 00e
-**Verified commit:** `a2bf2b7 chore: establish verified StorePulse foundation`
+**Verified foundation:** checkpoint 00e
+**Foundation commit:** `a2bf2b7 chore: establish verified StorePulse foundation`
+**Current feature candidate:** `feat(events): add idempotent POS sale ingestion`
 **Date:** 2026-09-08
 
 ## Current status
 
-The infrastructure/connectivity foundation is verified locally and in GitHub Actions. StorePulse is still intentionally incomplete as a Case 5 solution: POS sales, refunds, rankings, store analytics and alerting are the next implementation stages.
+The infrastructure/connectivity foundation is verified locally and in GitHub Actions. Stage 03 adds the first business write path: idempotent `SALE` ingestion through `POST /api/v1/events`. The complete Stage 03 developer-machine verification gate passed before commit. GitHub Actions for the Stage 03 commit is intentionally treated as a separate publication proof after push.
 
-## Implemented in source
+StorePulse remains intentionally incomplete as the full Case 5 solution: refund safety, POS sale generation, rankings, store analytics/settings and alerting are subsequent feature stages.
+
+## Implemented through Stage 03
 
 - Docker Compose topology for PostgreSQL, migration, seed, backend, frontend and five optional heartbeat simulators.
 - FastAPI liveness/readiness endpoints.
-- PostgreSQL-backed store list.
-- Store heartbeat persistence.
-- WebSocket `stores.changed` invalidation after heartbeat commit.
-- Vue dashboard shell that refetches store state on WebSocket invalidation and periodically refreshes time-derived connectivity state.
-- Initial schema for stores, products and POS events.
-- Deterministic idempotent seed: five stores, ten products.
-- Python unit/integration tests, frontend unit tests, GitHub Actions workflow and PowerShell verification workflow.
-- Committed frontend `package-lock.json`; Docker and CI require `npm ci`.
-- Explicit async SQLAlchemy engine disposal and pytest session-loop lifecycle.
-- Cross-platform line-ending policy in `.gitattributes`.
+- PostgreSQL-backed store list and heartbeat persistence.
+- WebSocket invalidation with REST refetch on the Vue client.
+- Initial relational schema for stores, products and POS events.
+- Deterministic seed: five stores and ten products.
+- `POST /api/v1/events` for `SALE` events.
+- PostgreSQL-authoritative idempotency using the `pos_events.event_id` primary key plus `INSERT ... ON CONFLICT DO NOTHING`.
+- First valid use of an `event_id`: `201 accepted`.
+- Exact replay of the same logical SALE payload: `200 duplicate` with no second row.
+- Reuse of an existing `event_id` with a different logical payload: `409 Conflict`.
+- Timezone-aware `occurred_at` validation and independent PostgreSQL `received_at`.
+- Late SALE ingestion preserves producer `occurred_at`; analytics assignment is deliberately deferred to the ranking stage.
+- Accepted SALE updates store `last_seen_at` and emits an `events.changed` invalidation after commit.
+- Unknown store/product validation and explicit rejection of premature `REFUND` payloads in the SALE-only stage.
+- PostgreSQL integration tests for sequential duplicates/conflicts and concurrent identical/conflicting requests.
+- Test cleanup for Stage 03 events so verification does not leave sale rows behind.
+- GitHub Actions Docker smoke coverage for actual HTTP accepted/duplicate/conflict semantics.
+- Committed frontend lockfile, `npm ci`, async SQLAlchemy lifecycle handling and cross-platform line-ending policy.
 
-## Verified developer-machine evidence — checkpoint 00e
+## Verified developer-machine evidence — Stage 03
 
-The supplied Windows + Docker Desktop logs prove the following for the current foundation:
+The supplied Windows + Docker Desktop log proves the following on the exact Stage 03 candidate:
 
-- Checkpoint 00e synchronization into the local repository: **PASS**.
+- Stage 03 synchronization into the working repository: **PASS**.
+- `git diff --check`: **PASS**.
 - Docker verification image build: **PASS**.
-- PostgreSQL `17.11-alpine` readiness: **PASS**.
+- PostgreSQL readiness: **PASS**.
 - Alembic migration: **PASS**.
 - Deterministic seed: **PASS**.
 - Ruff: **PASS**.
-- mypy: **PASS** (`9 source files`).
-- Backend pytest: **PASS** (`10 passed`).
+- mypy: **PASS** (`10 source files`).
+- Backend pytest: **PASS** (`25 passed`).
+- The Stage 03 suite includes real PostgreSQL idempotency, late-timestamp and concurrency cases.
 - Simulator compilation: **PASS**.
-- Frontend dependency tree/version checks: **PASS**.
+- Frontend dependency/version checks: **PASS**.
 - Frontend typecheck: **PASS**.
 - Frontend Vitest: **PASS** (`2 passed`).
 - Frontend production build: **PASS**.
 - Backend readiness smoke test: **PASS**.
-- Seeded stores API smoke test: **PASS** (exactly five stores).
-- Five simulator containers running concurrently: **PASS**.
-- Heartbeat delivery from all five simulators: **PASS** (`200 OK`).
-- Two-browser-tab automatic connectivity refresh: **PASS** (developer manual verification).
-- Backend restart persistence for seeded store state: **PASS** (`5` stores before and after restart).
-- Clean bootstrap after deleting the StorePulse PostgreSQL volume: **PASS**.
-- Full verification rerun after clean bootstrap: **PASS**.
+- Seeded store API smoke test: **PASS** (exactly five stores).
+- Full `scripts/verify.ps1` completion: **PASS**.
 
-The developer then committed the verified baseline as `a2bf2b7`, pushed it to `origin/main`, and confirmed the corresponding GitHub Actions workflow completed successfully.
+The Stage 03 GitHub Actions run is not claimed in this document before the feature commit is pushed. Repository workflow history is the authoritative publication evidence after push.
 
-## What the verified foundation does not prove yet
+## Stage 03 semantics proven by tests
 
-The current runtime proofs are deliberately scoped to the foundation. They do not yet prove employer requirements that depend on business functionality which has not been implemented:
+The current test suite proves the ingestion contract rather than merely checking route existence:
 
-- sales-event ingestion and API-level idempotency/conflicting duplicate semantics;
-- refund validation and over-refund protection;
+- a new SALE is persisted once;
+- an exact retry returns duplicate and preserves the original `received_at`;
+- a conflicting payload for the same `event_id` returns `409`;
+- an existing-ID conflict takes precedence over validating new unknown references;
+- unknown new store/product references return `404`;
+- naive timestamps and `REFUND` payloads are rejected in this stage;
+- a late SALE keeps its original `occurred_at`;
+- eight concurrent identical requests resolve to one accepted row plus duplicate responses;
+- two concurrent conflicting payloads resolve to one winner and one `409`.
+
+## Requirements still not proven
+
+Stage 03 does not claim completion of functionality that depends on later stages:
+
+- refund validation, partial/full refund semantics and over-refund protection;
+- configurable POS sale/refund generation from the five simulator instances;
 - ranking by revenue, sales count and average check;
 - rolling last-hour and per-store local-day windows;
-- late-event correction based on `occurred_at`;
+- assigning late events into ranking windows using `occurred_at`;
 - leader/outsider/dynamics;
 - store detail analytics and persisted settings;
 - offline incident lifecycle and notification outbox;
 - local-noon behind-plan alerts;
 - ranking persistence across restart;
-- final five-producer concurrency/load proof;
+- final five-producer load proof;
 - automated Playwright two-client ranking proof.
-
-## Known foundation limitations
-
-- The five simulator services send heartbeats only; they do not yet generate POS sales/refunds.
-- The current frontend is a connectivity foundation, not the final ranking product UI.
-- PostgreSQL is already the source of truth, but ranking persistence cannot be claimed until ranking exists.
-- The two-tab manual proof validates the realtime transport/refetch foundation, not yet live sales ranking.
 
 ## Next delivery block
 
-The next feature commit is intentionally focused on the core event contract:
+After the Stage 03 commit is pushed and its GitHub Actions workflow is green, the next feature commit is:
 
 ```text
-feat(events): add idempotent POS sale ingestion
+feat(refunds): enforce safe refund processing
 ```
 
-See `docs/NEXT_STEPS.md` for the complete staged commit roadmap.
+See `docs/NEXT_STEPS.md` for the complete staged roadmap.

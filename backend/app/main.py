@@ -3,16 +3,36 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import dispose_engine, get_session
+from app.event_ingestion import (
+    EventConflictError,
+    UnknownProductError,
+    UnknownStoreError,
+    ingest_sale_event,
+)
 from app.models import Store
 from app.realtime import manager
-from app.schemas import HealthResponse, HeartbeatResponse, StoreResponse
+from app.schemas import (
+    EventIngestResponse,
+    HealthResponse,
+    HeartbeatResponse,
+    SaleEventCreate,
+    StoreResponse,
+)
 from app.services import is_store_online
 
 settings = get_settings()
@@ -27,7 +47,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await dispose_engine()
 
 
-app = FastAPI(title=settings.project_name, version="0.1.3", lifespan=lifespan)
+app = FastAPI(title=settings.project_name, version="0.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
@@ -93,6 +113,55 @@ async def heartbeat(store_code: str, session: SessionDep) -> HeartbeatResponse:
     await manager.broadcast({"type": "stores.changed", "store_code": store.code})
 
     return HeartbeatResponse(store_code=store.code, last_seen_at=now, status="accepted")
+
+
+@app.post(
+    "/api/v1/events",
+    response_model=EventIngestResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_200_OK: {
+            "model": EventIngestResponse,
+            "description": "Exact duplicate; no second event was created",
+        },
+        status.HTTP_404_NOT_FOUND: {"description": "Unknown store or product"},
+        status.HTTP_409_CONFLICT: {"description": "event_id reused with different payload"},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {"description": "Invalid SALE payload"},
+    },
+)
+async def create_event(
+    payload: SaleEventCreate,
+    response: Response,
+    session: SessionDep,
+) -> EventIngestResponse:
+    try:
+        result = await ingest_sale_event(session, payload)
+    except UnknownStoreError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="unknown store",
+        ) from exc
+    except UnknownProductError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="unknown product",
+        ) from exc
+    except EventConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="event_id already exists with different payload",
+        ) from exc
+
+    if result.status == "duplicate":
+        response.status_code = status.HTTP_200_OK
+    else:
+        await manager.broadcast({"type": "events.changed", "store_code": payload.store_code})
+
+    return EventIngestResponse(
+        event_id=result.event_id,
+        status=result.status,
+        received_at=result.received_at,
+    )
 
 
 @app.websocket("/ws/dashboard")

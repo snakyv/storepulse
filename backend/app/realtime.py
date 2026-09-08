@@ -25,7 +25,7 @@ class ConnectionManager:
         for connection in connections:
             try:
                 await connection.send_json(payload)
-            except (RuntimeError, WebSocketDisconnect):
+            except (OSError, RuntimeError, WebSocketDisconnect):
                 stale.append(connection)
 
         if stale:

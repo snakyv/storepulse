@@ -54,7 +54,7 @@ function connectWebSocket(): void {
   currentSocket.onmessage = (event) => {
     try {
       const payload = JSON.parse(event.data) as { type?: string }
-      if (payload.type === 'stores.changed') {
+      if (payload.type === 'stores.changed' || payload.type === 'events.changed') {
         scheduleRefresh()
       }
     } catch {
@@ -107,7 +107,7 @@ onBeforeUnmount(() => {
 
     <section class="notice">
       <strong>Foundation checkpoint.</strong>
-      Heartbeats, PostgreSQL persistence and multi-client realtime invalidation are active. Sales ranking and analytics are intentionally the next phase.
+      Heartbeats, idempotent SALE ingestion and multi-client realtime invalidation are active. Sales ranking and analytics are intentionally the next phase.
     </section>
 
     <section class="summary-grid">

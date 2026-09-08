@@ -16,13 +16,13 @@ Scope:
 - add `.gitattributes` so Windows development and Linux Docker/CI use deterministic line endings;
 - publish the staged delivery roadmap below.
 
-### 03 — idempotent SALE ingestion
+### 03 — idempotent SALE ingestion (local verification PASS; publication gate next)
 
 ```text
 feat(events): add idempotent POS sale ingestion
 ```
 
-Implement database-enforced event insertion, exact-duplicate acceptance, conflicting same-`event_id` `409`, validation and concurrency tests.
+Implemented database-enforced event insertion, exact-duplicate acceptance, conflicting same-`event_id` `409`, validation and concurrency tests. The complete developer-machine verification gate passed with `25` backend tests. Commit/push this stage and require a green GitHub Actions run before Stage 04 begins.
 
 ### 04 — refund safety
 

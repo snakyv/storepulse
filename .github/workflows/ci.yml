@@ -106,6 +106,55 @@ jobs:
               stores = json.load(file)
           assert len(stores) == 5, f"expected 5 stores, got {len(stores)}"
           PY
+      - name: Smoke-test idempotent SALE ingestion
+        run: |
+          python - <<'PY'
+          import datetime
+          import json
+          import urllib.error
+          import urllib.request
+          import uuid
+
+          endpoint = "http://localhost:8000/api/v1/events"
+          event_id = str(uuid.uuid4())
+          payload = {
+              "event_id": event_id,
+              "store_code": "MAD-MADRID",
+              "product_sku": "COFFEE-001",
+              "event_type": "SALE",
+              "quantity": 1,
+              "amount_cents": 799,
+              "occurred_at": datetime.datetime.now(datetime.UTC).isoformat(),
+              "source_instance": "ci:docker-smoke",
+              "metadata": {"origin": "github-actions"},
+          }
+
+          def post(body):
+              request = urllib.request.Request(
+                  endpoint,
+                  data=json.dumps(body).encode("utf-8"),
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=5) as response:
+                      return response.status, json.load(response)
+              except urllib.error.HTTPError as exc:
+                  return exc.code, json.load(exc)
+
+          accepted_status, accepted = post(payload)
+          duplicate_status, duplicate = post(payload)
+          conflict_payload = dict(payload)
+          conflict_payload["amount_cents"] = 899
+          conflict_status, conflict = post(conflict_payload)
+
+          assert accepted_status == 201, (accepted_status, accepted)
+          assert accepted["status"] == "accepted", accepted
+          assert duplicate_status == 200, (duplicate_status, duplicate)
+          assert duplicate["status"] == "duplicate", duplicate
+          assert conflict_status == 409, (conflict_status, conflict)
+          assert conflict["detail"] == "event_id already exists with different payload", conflict
+          PY
       - name: Show service state
         if: always()
         run: docker compose ps
