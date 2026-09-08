@@ -1,0 +1,1 @@
+"""StorePulse POS simulator scaffold."""
